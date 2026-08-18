@@ -55,7 +55,7 @@ def test_inspect_prints_context_summary(tmp_path, capsys):
     output = capsys.readouterr().out
     assert exit_code == 0
     assert "Session: session-1" in output
-    assert "Turn 1: model=gpt-test duration_ms=42" in output
+    assert "Turn 1: protocol=openai-chat-completions model=gpt-test duration_ms=42" in output
     assert "system: You are Harness." in output
     assert "user: Inspect this." in output
     assert "tool: read_file" in output

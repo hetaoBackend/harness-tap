@@ -9,11 +9,11 @@ from typing import Any
 from aiohttp import ClientError, ClientSession, web
 
 from harness_tap.headers import filter_headers
-from harness_tap.sse import ChatCompletionSSEReassembler
+from harness_tap.protocols import join_upstream_url, protocol_from_path
+from harness_tap.sse import reassembler_for_protocol
 from harness_tap.store import TraceStore
 from harness_tap.viewer import install_viewer_routes
 
-CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
 UPSTREAM_BASE_URL_KEY = web.AppKey("upstream_base_url", str)
 TRACE_STORE_KEY = web.AppKey("trace_store", TraceStore)
 STATE_KEY = web.AppKey("state", dict[str, int])
@@ -48,7 +48,8 @@ async def run_proxy(
 
 
 async def proxy_handler(request: web.Request) -> web.StreamResponse:
-    if request.path != CHAT_COMPLETIONS_PATH:
+    protocol = protocol_from_path(request.path)
+    if protocol is None:
         return web.Response(status=404, text="Not Found")
     if request.method != "POST":
         return web.Response(status=405, text="Method Not Allowed")
@@ -73,18 +74,19 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
             duration_ms=_duration_ms(started),
             upstream_base_url=upstream_base_url,
             request_body=None,
+            protocol=protocol,
         )
         record["response"] = {"status": 400, "headers": {}, "body": {"error": "Invalid JSON request body"}}
         record["capture"]["rejected"] = True
         trace_store.append(record)
         return web.json_response({"error": "Invalid JSON request body"}, status=400)
 
-    upstream_url = f"{upstream_base_url}/chat/completions"
+    upstream_url = join_upstream_url(upstream_base_url, request.path)
     forward_headers = filter_headers(request.headers, redact=False)
     try:
         async with ClientSession() as session:
             async with session.post(upstream_url, headers=forward_headers, json=request_body) as upstream_response:
-                if _is_stream_response(request_body, upstream_response.headers.get("Content-Type", "")):
+                if _is_stream_response(upstream_response.headers.get("Content-Type", "")):
                     return await _relay_stream_response(
                         request=request,
                         upstream_response=upstream_response,
@@ -94,6 +96,7 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
                         started=started,
                         upstream_base_url=upstream_base_url,
                         request_body=request_body,
+                        protocol=protocol,
                         trace_store=trace_store,
                     )
                 response_bytes = await upstream_response.read()
@@ -106,6 +109,7 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
                     duration_ms=_duration_ms(started),
                     upstream_base_url=upstream_base_url,
                     request_body=request_body,
+                    protocol=protocol,
                 )
                 record["response"] = {
                     "status": upstream_response.status,
@@ -127,6 +131,7 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
             duration_ms=_duration_ms(started),
             upstream_base_url=upstream_base_url,
             request_body=request_body,
+            protocol=protocol,
         )
         record["response"] = {"status": 502, "headers": {}, "body": {"error": str(exc)}}
         trace_store.append(record)
@@ -142,6 +147,7 @@ def _base_record(
     duration_ms: int,
     upstream_base_url: str,
     request_body: Any,
+    protocol: str,
 ) -> dict[str, Any]:
     return {
         "timestamp": timestamp,
@@ -159,7 +165,7 @@ def _base_record(
         "response": {},
         "capture": {
             "client": "harness",
-            "protocol": "openai-chat-completions",
+            "protocol": protocol,
         },
     }
 
@@ -177,7 +183,7 @@ def _parse_response_body(response_bytes: bytes) -> Any:
         return response_bytes.decode("utf-8", errors="replace")
 
 
-def _is_stream_response(request_body: Any, content_type: str) -> bool:
+def _is_stream_response(content_type: str) -> bool:
     return content_type.lower().split(";", 1)[0].strip() == "text/event-stream"
 
 
@@ -191,9 +197,10 @@ async def _relay_stream_response(
     started: float,
     upstream_base_url: str,
     request_body: Any,
+    protocol: str,
     trace_store: TraceStore,
 ) -> web.StreamResponse:
-    reassembler = ChatCompletionSSEReassembler()
+    reassembler = reassembler_for_protocol(protocol)
     downstream = web.StreamResponse(
         status=upstream_response.status,
         headers=filter_headers(upstream_response.headers, redact=False),
@@ -216,6 +223,7 @@ async def _relay_stream_response(
             duration_ms=_duration_ms(started),
             upstream_base_url=upstream_base_url,
             request_body=request_body,
+            protocol=protocol,
         )
         record["transport"] = "http-sse"
         record["response"] = {

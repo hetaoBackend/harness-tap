@@ -66,6 +66,8 @@ async def test_viewer_index_and_session_apis(tmp_path):
         assert sessions_body["sessions"][0]["record_count"] == 1
         assert detail_response.status == 200
         assert detail_body["session"]["id"] == "session-viewer"
+        assert detail_body["session"]["protocols"] == ["openai-chat-completions"]
+        assert detail_body["turns"][0]["conversation"][-1]["text"] == "Trace ready."
         assert detail_body["records"][0]["request"]["body"]["messages"][1]["content"] == "Show trace."
     finally:
         await runner.cleanup()
@@ -218,6 +220,81 @@ async def test_viewer_html_preserves_inspector_detail_state_on_refresh(tmp_path)
         assert "data-detail-key" in viewer_html
         assert "inspectorDetailKey" in viewer_html
         assert "sessionFingerprint" in viewer_html
+        assert "conversationBody" in viewer_html
+        assert "protocolLabel" in viewer_html
+        assert "openai-responses" in viewer_html
+        assert "anthropic-messages" in viewer_html
+    finally:
+        await runner.cleanup()
+
+
+async def test_session_api_returns_responses_and_anthropic_conversation(tmp_path):
+    store = JsonlTraceStore(tmp_path, session_id="session-multi")
+    store.append(
+        {
+            "timestamp": "2026-07-02T09:00:00+00:00",
+            "turn": 1,
+            "request": {
+                "method": "POST",
+                "path": "/v1/responses",
+                "body": {
+                    "model": "gpt-test",
+                    "instructions": "Be terse.",
+                    "input": "Show trace.",
+                },
+            },
+            "response": {
+                "status": 200,
+                "body": {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [{"type": "output_text", "text": "Response ready."}],
+                        }
+                    ]
+                },
+            },
+            "capture": {"protocol": "openai-responses"},
+        }
+    )
+    store.append(
+        {
+            "timestamp": "2026-07-02T09:01:00+00:00",
+            "turn": 2,
+            "request": {
+                "method": "POST",
+                "path": "/v1/messages",
+                "body": {
+                    "model": "claude-test",
+                    "system": "You are Harness.",
+                    "messages": [{"role": "user", "content": "Show anthropic."}],
+                },
+            },
+            "response": {
+                "status": 200,
+                "body": {"content": [{"type": "text", "text": "Anthropic ready."}]},
+            },
+            "capture": {"protocol": "anthropic-messages"},
+        }
+    )
+    runner, base_url = await _start_app(create_app(upstream_base_url="https://api.example.test/v1", trace_store=store))
+
+    try:
+        async with ClientSession() as session:
+            sessions_response = await session.get(f"{base_url}/api/sessions")
+            sessions_body = await sessions_response.json()
+            detail_response = await session.get(f"{base_url}/api/sessions/session-multi")
+            detail_body = await detail_response.json()
+
+        assert sessions_body["sessions"][0]["protocols"] == ["anthropic-messages", "openai-responses"]
+        responses_turn = detail_body["turns"][0]
+        anthropic_turn = detail_body["turns"][1]
+        assert responses_turn["protocol"] == "openai-responses"
+        assert responses_turn["conversation"][0]["text"] == "Be terse."
+        assert responses_turn["conversation"][-1]["text"] == "Response ready."
+        assert anthropic_turn["protocol"] == "anthropic-messages"
+        assert anthropic_turn["conversation"][0]["text"] == "You are Harness."
+        assert anthropic_turn["conversation"][-1]["text"] == "Anthropic ready."
     finally:
         await runner.cleanup()
 

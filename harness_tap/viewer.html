@@ -1,0 +1,1514 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>Harness Tap Trace Viewer</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #e8edf2;
+      --muted: #8fa0ad;
+      --faint: #5e6b76;
+      --line: #27343f;
+      --panel: #10181f;
+      --panel-2: #0c1218;
+      --page: #060a0e;
+      --amber: #e1b65f;
+      --cyan: #71c7d9;
+      --green: #7fca8b;
+      --red: #e17878;
+      --violet: #b9a4ff;
+      --chip: #17232d;
+      --focus: #f2ce7d;
+      --bubble: #0e1a22;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    button, input, select {
+      font: inherit;
+    }
+    button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+    .trace-shell {
+      display: grid;
+      grid-template-columns: 300px minmax(520px, 1fr) minmax(380px, 400px);
+      height: 100vh;
+      min-width: 1100px;
+    }
+    .sessions, .timeline, .inspector {
+      min-height: 0;
+      border-right: 1px solid var(--line);
+      background: var(--panel-2);
+    }
+    .inspector { border-right: 0; background: #081016; }
+    .brand {
+      height: 72px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .brand h1 {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.1;
+      font-weight: 760;
+    }
+    .brand p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.2;
+    }
+    .pulse {
+      width: 11px;
+      height: 11px;
+      border-radius: 999px;
+      background: var(--green);
+      box-shadow: 0 0 0 4px rgba(127, 202, 139, .12);
+      flex: 0 0 auto;
+    }
+    .toolbar {
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      gap: 8px;
+    }
+    .search {
+      width: 100%;
+      height: 34px;
+      border: 1px solid var(--line);
+      background: #071016;
+      color: var(--ink);
+      padding: 0 10px;
+      border-radius: 6px;
+    }
+    .meta-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .chip {
+      border: 1px solid var(--line);
+      background: var(--chip);
+      color: var(--muted);
+      border-radius: 999px;
+      padding: 3px 8px;
+      min-height: 22px;
+    }
+    .chip.protocol-openai-chat-completions { color: var(--cyan); border-color: rgba(113, 199, 217, .35); }
+    .chip.protocol-openai-responses { color: var(--amber); border-color: rgba(225, 182, 95, .35); }
+    .chip.protocol-anthropic-messages { color: var(--violet); border-color: rgba(185, 164, 255, .4); }
+    .filter-row {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .filter-chip {
+      border: 1px solid var(--line);
+      background: transparent;
+      color: var(--muted);
+      border-radius: 999px;
+      padding: 3px 8px;
+      cursor: pointer;
+    }
+    .filter-chip.active {
+      color: var(--ink);
+      border-color: rgba(113, 199, 217, .45);
+      background: rgba(113, 199, 217, .1);
+    }
+    .list {
+      height: calc(100vh - 196px);
+      overflow: auto;
+      padding: 8px;
+    }
+    .session-item, .turn-item {
+      width: 100%;
+      text-align: left;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--ink);
+      border-radius: 7px;
+      padding: 10px;
+      display: grid;
+      gap: 6px;
+      cursor: pointer;
+    }
+    .session-item:hover, .turn-item:hover { background: rgba(255,255,255,.035); }
+    .session-item.active, .turn-item.active {
+      border-color: rgba(113, 199, 217, .45);
+      background: rgba(113, 199, 217, .09);
+    }
+    .item-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: baseline;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .item-sub {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .status-ok { color: var(--green); }
+    .status-error { color: var(--red); }
+    .main-head, .inspect-head {
+      min-height: 72px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      gap: 6px;
+      background: var(--panel);
+    }
+    .main-title-row, .inspect-title-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+    .main-title, .inspect-title {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 780;
+      line-height: 1.2;
+    }
+    .view-toggle {
+      display: flex;
+      gap: 6px;
+    }
+    .view-toggle button {
+      border: 1px solid var(--line);
+      background: #0c151d;
+      color: var(--muted);
+      border-radius: 6px;
+      padding: 5px 9px;
+      cursor: pointer;
+    }
+    .view-toggle button.active {
+      color: var(--ink);
+      border-color: rgba(225, 182, 95, .5);
+      background: rgba(225, 182, 95, .1);
+    }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+      background: #0a141b;
+    }
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 9px;
+      min-height: 58px;
+      background: #0c171f;
+    }
+    .metric b {
+      display: block;
+      font-size: 18px;
+      line-height: 1.15;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .metric span {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+    .turns {
+      height: calc(100vh - 187px);
+      overflow: auto;
+      padding: 14px 16px 32px;
+      display: grid;
+      gap: 14px;
+      align-content: start;
+    }
+    .turn-card {
+      border: 1px solid var(--line);
+      background: #0b151c;
+      border-radius: 10px;
+      overflow: hidden;
+      content-visibility: auto;
+      contain-intrinsic-size: 220px;
+    }
+    .turn-card.active {
+      border-color: rgba(113, 199, 217, .4);
+    }
+    .turn-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: #101b24;
+      cursor: pointer;
+    }
+    .turn-top strong { font-size: 13px; }
+    .turn-top span { color: var(--muted); font-size: 12px; }
+    .turn-top-left, .turn-top-right {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      min-width: 0;
+      flex-wrap: wrap;
+    }
+    .expand-state {
+      color: var(--cyan);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .tool-strip {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      padding: 8px 14px 0;
+    }
+    .tool-pill {
+      border: 1px solid rgba(185, 164, 255, .3);
+      color: var(--violet);
+      background: rgba(185, 164, 255, .08);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 11px;
+    }
+    .conversation {
+      padding: 12px 14px 14px;
+      display: grid;
+      gap: 10px;
+    }
+    .msg {
+      display: grid;
+      grid-template-columns: 92px minmax(0, 1fr);
+      gap: 12px;
+      align-items: start;
+    }
+    .msg-role {
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding-top: 8px;
+      letter-spacing: .02em;
+    }
+    .msg.system .msg-role { color: var(--amber); }
+    .msg.user .msg-role { color: var(--cyan); }
+    .msg.assistant .msg-role,
+    .msg.response .msg-role { color: var(--green); }
+    .msg.tool_results .msg-role,
+    .msg.tool_call .msg-role { color: var(--violet); }
+    .msg-body {
+      background: var(--bubble);
+      border: 1px solid rgba(39, 52, 63, .9);
+      border-radius: 8px;
+      padding: 10px 12px;
+      min-width: 0;
+    }
+    .msg.response .msg-body {
+      border-color: rgba(127, 202, 139, .35);
+      background: #0d1a16;
+    }
+    .msg.system .msg-body {
+      border-color: rgba(225, 182, 95, .28);
+      background: #16140c;
+    }
+    .msg-title {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .msg-text {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      color: #d8e2ea;
+      line-height: 1.55;
+      font-size: 13.5px;
+    }
+    .turn-card:not(.expanded) .msg-text {
+      display: -webkit-box;
+      -webkit-line-clamp: 8;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .context-stack { padding: 8px 12px 12px; display: grid; gap: 10px; }
+    .context-section {
+      display: grid;
+      grid-template-columns: 118px minmax(0, 1fr);
+      gap: 12px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(39, 52, 63, .65);
+    }
+    .context-section:first-child { border-top: 0; padding-top: 0; }
+    .context-label {
+      display: flex;
+      gap: 6px;
+      align-items: baseline;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+    .context-label b {
+      font-size: 11px;
+      font-weight: 850;
+      text-transform: uppercase;
+    }
+    .context-label span { color: var(--muted); font-size: 11px; }
+    .context-items { display: grid; gap: 7px; min-width: 0; }
+    .context-item {
+      display: grid;
+      grid-template-columns: minmax(82px, 118px) minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      min-width: 0;
+    }
+    .context-title {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 740;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .context-text {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      color: #d8e2ea;
+      line-height: 1.45;
+      font-size: 13px;
+      display: -webkit-box;
+      -webkit-line-clamp: 4;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .turn-card.expanded .context-text {
+      display: block;
+      -webkit-line-clamp: unset;
+    }
+    .context-more { color: var(--muted); font-size: 12px; }
+    .context-section.system .context-label b { color: var(--amber); }
+    .context-section.user .context-label b { color: var(--cyan); }
+    .context-section.assistant .context-label b,
+    .context-section.response .context-label b { color: var(--green); }
+    .context-section.tool_schemas .context-label b,
+    .context-section.tool_results .context-label b { color: var(--violet); }
+    .message-stack { padding: 10px 12px; display: grid; gap: 8px; }
+    .message {
+      display: grid;
+      grid-template-columns: 82px minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      font-size: 13px;
+    }
+    .role {
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding-top: 2px;
+    }
+    .role.system { color: var(--amber); }
+    .role.user { color: var(--cyan); }
+    .role.assistant { color: var(--green); }
+    .role.tool { color: var(--violet); }
+    .text {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      color: #d8e2ea;
+      line-height: 1.45;
+    }
+    .text.dim { color: var(--muted); }
+    .inspect-body {
+      height: calc(100vh - 72px);
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      min-height: 0;
+    }
+    .tabs {
+      display: flex;
+      gap: 6px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      overflow-x: auto;
+    }
+    .tab {
+      border: 1px solid var(--line);
+      background: #0c151d;
+      color: var(--muted);
+      border-radius: 6px;
+      padding: 6px 9px;
+      cursor: pointer;
+      min-width: max-content;
+    }
+    .tab.active {
+      color: var(--ink);
+      border-color: rgba(225, 182, 95, .5);
+      background: rgba(225, 182, 95, .1);
+    }
+    .inspect-actions {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      gap: 8px;
+      justify-content: space-between;
+      align-items: center;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .inspector-panel {
+      height: 100%;
+      overflow: auto;
+      padding: 12px;
+      background: #071017;
+    }
+    #payload {
+      min-height: 0;
+      overflow: hidden;
+    }
+    .inspector-section {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0b151c;
+      overflow: hidden;
+    }
+    .inspector-section + .inspector-section {
+      margin-top: 12px;
+    }
+    .inspector-section h3 {
+      margin: 0;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      font-size: 12px;
+      line-height: 1.2;
+      text-transform: uppercase;
+      color: var(--muted);
+      background: #101b24;
+    }
+    .inspector-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      padding: 10px 12px;
+    }
+    .inspector-stat {
+      border: 1px solid rgba(39, 52, 63, .75);
+      border-radius: 7px;
+      padding: 8px;
+      min-width: 0;
+      background: #08131a;
+    }
+    .inspector-stat b {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+    }
+    .inspector-stat span {
+      color: var(--muted);
+      display: block;
+      font-size: 11px;
+      margin-top: 3px;
+      text-transform: uppercase;
+    }
+    .prompt-list, .tool-list, .response-list {
+      padding: 10px 12px;
+      display: grid;
+      gap: 8px;
+    }
+    .prompt-card, .tool-card, .response-card {
+      border: 1px solid rgba(39, 52, 63, .85);
+      border-radius: 7px;
+      background: #08131a;
+      overflow: hidden;
+    }
+    .prompt-card summary, .tool-card summary, .response-card summary {
+      cursor: pointer;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 8px 10px;
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 760;
+    }
+    .prompt-card summary::-webkit-details-marker,
+    .tool-card summary::-webkit-details-marker,
+    .response-card summary::-webkit-details-marker {
+      display: none;
+    }
+    .prompt-card summary span, .tool-card summary span, .response-card summary span {
+      color: var(--muted);
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .prompt-card.system summary { color: var(--amber); }
+    .prompt-card.user summary { color: var(--cyan); }
+    .prompt-card.assistant summary, .response-card.assistant summary { color: var(--green); }
+    .prompt-card.tool summary, .tool-card summary, .response-card.tool_calls summary { color: var(--violet); }
+    .inspector-text {
+      border-top: 1px solid rgba(39, 52, 63, .75);
+      margin: 0;
+      padding: 10px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      height: auto;
+      overflow: visible;
+      color: #d8e2ea;
+      font: 12px/1.5 "SFMono-Regular", Consolas, ui-monospace, monospace;
+    }
+    .tool-param {
+      border-top: 1px solid rgba(39, 52, 63, .75);
+      color: var(--muted);
+      padding: 8px 10px;
+      font-size: 12px;
+    }
+    .lazy-text-slot {
+      min-height: 0;
+    }
+    .copy-btn {
+      border: 1px solid var(--line);
+      background: #12202a;
+      color: var(--ink);
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    pre {
+      margin: 0;
+      padding: 14px;
+      height: 100%;
+      overflow: auto;
+      color: #dbe6ee;
+      background: #071017;
+      font: 12px/1.5 "SFMono-Regular", Consolas, ui-monospace, monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .empty {
+      color: var(--muted);
+      padding: 18px;
+      line-height: 1.45;
+    }
+    .delta-list {
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+      overflow: auto;
+    }
+    .delta-item {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 10px;
+      background: #0a141b;
+    }
+    .delta-item b { display: block; margin-bottom: 4px; }
+    .kbd {
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 0 5px;
+      font-size: 11px;
+      color: var(--faint);
+    }
+    @media (max-width: 1100px) {
+      body { overflow: auto; }
+      .trace-shell {
+        min-width: 0;
+        height: auto;
+        grid-template-columns: 1fr;
+      }
+      .sessions, .timeline, .inspector { border-right: 0; border-bottom: 1px solid var(--line); }
+      .list, .turns, .inspect-body { height: auto; max-height: none; }
+      .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .inspector-grid { grid-template-columns: 1fr; }
+      .message, .context-section, .context-item, .msg { grid-template-columns: 1fr; gap: 4px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="trace-shell">
+    <aside class="sessions">
+      <header class="brand">
+        <div>
+          <h1>Harness Tap Trace Viewer</h1>
+          <p>Chat, Responses, and Anthropic</p>
+        </div>
+        <span class="pulse" title="Viewer is live"></span>
+      </header>
+      <div class="toolbar">
+        <input id="search" class="search" type="search" placeholder="Search sessions and turns">
+        <div class="filter-row" id="protocol-filters"></div>
+        <div class="meta-row">
+          <span class="chip" id="session-count">0 sessions</span>
+          <span class="chip" id="refresh-label">auto refresh</span>
+        </div>
+      </div>
+      <nav id="sessions" class="list" aria-label="Trace sessions"></nav>
+    </aside>
+
+    <section class="timeline">
+      <header class="main-head">
+        <div class="main-title-row">
+          <h2 class="main-title" id="session-title">No trace selected</h2>
+          <div class="view-toggle" id="view-toggle">
+            <button type="button" data-view="conversation" class="active">Conversation</button>
+            <button type="button" data-view="grouped">Grouped</button>
+          </div>
+        </div>
+        <div class="meta-row" id="session-meta"></div>
+      </header>
+      <section class="summary-grid" id="summary"></section>
+      <section class="turns" id="turns"></section>
+    </section>
+
+    <aside class="inspector">
+      <header class="inspect-head">
+        <div class="inspect-title-row">
+          <h2 class="inspect-title" id="inspect-title">Inspector</h2>
+          <span class="kbd">J / K</span>
+        </div>
+        <div class="meta-row" id="inspect-meta"></div>
+      </header>
+      <section class="inspect-body">
+        <nav class="tabs" id="tabs" aria-label="Inspector tabs"></nav>
+        <div class="inspect-actions">
+          <span id="payload-label">Select a turn</span>
+          <button id="copy" class="copy-btn" type="button">Copy JSON</button>
+        </div>
+        <div id="payload"></div>
+      </section>
+    </aside>
+  </main>
+  <script>
+    const PROTOCOL_LABELS = {
+      "openai-chat-completions": "Chat Completions",
+      "openai-responses": "Responses",
+      "anthropic-messages": "Anthropic"
+    };
+    const state = {
+      sessions: [],
+      detail: null,
+      selectedSession: "",
+      selectedRecordIndex: 0,
+      expandedRecords: new Set(),
+      openInspectorDetails: new Set(),
+      closedInspectorDetails: new Set(),
+      fullTextRefs: new Map(),
+      fullTextCounter: 0,
+      detailFingerprint: "",
+      tab: "overview",
+      query: "",
+      view: "conversation",
+      protocolFilter: "all"
+    };
+    const $ = (id) => document.getElementById(id);
+    const tabs = ["overview", "request", "response", "events", "delta", "raw"];
+    const TEXT_PREVIEW_LIMIT = 900;
+    const TIMELINE_PREVIEW_LIMIT = 260;
+
+    $("search").addEventListener("input", (event) => {
+      state.query = event.target.value.toLowerCase();
+      renderSessions();
+      renderTurns();
+    });
+    $("copy").addEventListener("click", async () => {
+      const payload = currentPayload();
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      $("payload-label").textContent = "Copied";
+      setTimeout(renderInspector, 700);
+    });
+    $("view-toggle").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-view]");
+      if (!button) return;
+      state.view = button.dataset.view;
+      $("view-toggle").querySelectorAll("[data-view]").forEach((node) => {
+        node.classList.toggle("active", node.dataset.view === state.view);
+      });
+      renderTurns();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.target.matches("input, textarea, select")) return;
+      if (event.key === "j") selectTurn(state.selectedRecordIndex + 1);
+      if (event.key === "k") selectTurn(state.selectedRecordIndex - 1);
+    });
+
+    async function loadSessions() {
+      const response = await fetch("/api/sessions", {cache: "no-store"});
+      const body = await response.json();
+      state.sessions = body.sessions || [];
+      $("session-count").textContent = `${state.sessions.length} sessions`;
+      renderProtocolFilters();
+      if (!state.selectedSession && state.sessions.length) {
+        state.selectedSession = state.sessions[0].id;
+        await loadDetail(state.selectedSession);
+      } else if (state.selectedSession) {
+        const selectedSummary = state.sessions.find((session) => session.id === state.selectedSession);
+        if (selectedSummary && sessionFingerprint(selectedSummary) !== state.detailFingerprint) {
+          await loadDetail(state.selectedSession, true);
+        }
+      }
+      renderSessions();
+    }
+
+    async function loadDetail(sessionId, keepSelection = false) {
+      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {cache: "no-store"});
+      if (!response.ok) return;
+      state.detail = await response.json();
+      state.selectedSession = sessionId;
+      state.detailFingerprint = sessionFingerprint(state.detail?.session);
+      if (!keepSelection) {
+        state.selectedRecordIndex = 0;
+        state.expandedRecords = new Set([0]);
+        state.openInspectorDetails = new Set();
+        state.closedInspectorDetails = new Set();
+      }
+      renderAll();
+    }
+
+    function renderAll() {
+      renderSessions();
+      renderSessionHead();
+      renderSummary();
+      renderTurns();
+      renderInspector();
+    }
+
+    function renderProtocolFilters() {
+      const host = $("protocol-filters");
+      const protocols = ["all", ...new Set(state.sessions.flatMap((session) => session.protocols || []))];
+      host.innerHTML = protocols.map((protocol) => `
+        <button class="filter-chip ${state.protocolFilter === protocol ? "active" : ""}" data-protocol="${escapeAttr(protocol)}" type="button">
+          ${escapeHtml(protocol === "all" ? "All APIs" : protocolLabel(protocol))}
+        </button>
+      `).join("");
+      host.querySelectorAll("[data-protocol]").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.protocolFilter = button.dataset.protocol;
+          renderProtocolFilters();
+          renderSessions();
+        });
+      });
+    }
+
+    function renderSessions() {
+      const list = $("sessions");
+      const sessions = visibleSessions();
+      list.innerHTML = sessions.length ? sessions.map((session) => `
+        <button class="session-item ${session.id === state.selectedSession ? "active" : ""}" data-session="${escapeAttr(session.id)}">
+          <span class="item-title"><span>${escapeHtml(shortId(session.id))}</span><span>${session.record_count}</span></span>
+          <span class="item-sub">${escapeHtml(protocolLabel((session.protocols || [])[0]))} · ${escapeHtml(session.models?.[0] || "model unknown")}</span>
+          <span class="item-sub">${escapeHtml(session.updated_at || session.started_at || "no timestamp")}</span>
+        </button>
+      `).join("") : `<div class="empty">No trace sessions yet. Send Chat Completions, Responses, or Anthropic Messages through the proxy and this list will fill in.</div>`;
+      list.querySelectorAll("[data-session]").forEach((button) => {
+        button.addEventListener("click", () => loadDetail(button.dataset.session));
+      });
+    }
+
+    function visibleSessions() {
+      return state.sessions.filter((session) => {
+        if (state.protocolFilter !== "all" && !(session.protocols || []).includes(state.protocolFilter)) return false;
+        if (!state.query) return true;
+        const haystack = [session.id, ...(session.models || []), ...(session.protocols || [])].join(" ").toLowerCase();
+        return haystack.includes(state.query);
+      });
+    }
+
+    function renderSessionHead() {
+      const detail = state.detail;
+      if (!detail) {
+        $("session-title").textContent = "No trace selected";
+        $("session-meta").innerHTML = "";
+        return;
+      }
+      const summary = detail.session;
+      $("session-title").textContent = shortId(summary.id);
+      $("session-meta").innerHTML = [
+        `${summary.record_count} turns`,
+        ...(summary.protocols || []).map(protocolLabel),
+        `${summary.models?.join(", ") || "model unknown"}`,
+        `${summary.error_count || 0} errors`
+      ].map((item, index) => {
+        const protocol = (summary.protocols || [])[index - 1];
+        const cls = index > 0 && index <= (summary.protocols || []).length ? ` protocol-${protocol}` : "";
+        return `<span class="chip${cls}">${escapeHtml(item)}</span>`;
+      }).join("");
+    }
+
+    function renderSummary() {
+      const summary = state.detail?.session;
+      const host = $("summary");
+      if (!summary) {
+        host.innerHTML = metric("0", "Turns") + metric("0", "Tokens") + metric("0ms", "Duration") + metric("-", "API");
+        return;
+      }
+      host.innerHTML = [
+        metric(summary.record_count, "Turns"),
+        metric(summary.total_tokens || 0, "Tokens"),
+        metric(`${summary.total_duration_ms || 0}ms`, "Duration"),
+        metric(protocolLabel((summary.protocols || [])[0]) || summary.models?.[0] || "-", "API"),
+      ].join("");
+    }
+
+    function renderTurns() {
+      const records = filteredRecords();
+      const host = $("turns");
+      if (!state.detail) {
+        host.innerHTML = `<div class="empty">Choose a session to preview the full conversation context.</div>`;
+        return;
+      }
+      if (!records.length) {
+        host.innerHTML = `<div class="empty">No turns match the current search.</div>`;
+        return;
+      }
+      host.innerHTML = records.map(({record, index}) => turnCard(record, index)).join("");
+      host.querySelectorAll("[data-record]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const index = Number(button.dataset.record);
+          const wasSelected = index === state.selectedRecordIndex && state.expandedRecords.has(index);
+          state.selectedRecordIndex = index;
+          if (wasSelected) {
+            state.expandedRecords.delete(index);
+          } else {
+            state.expandedRecords.add(index);
+          }
+          renderTurns();
+          renderInspector();
+        });
+      });
+    }
+
+    function selectTurn(index) {
+      const records = state.detail?.records || [];
+      if (!records.length) return;
+      const next = Math.max(0, Math.min(records.length - 1, index));
+      state.selectedRecordIndex = next;
+      state.expandedRecords.add(next);
+      renderTurns();
+      renderInspector();
+      const card = document.querySelector(`[data-record="${next}"]`);
+      card?.scrollIntoView({block: "nearest"});
+    }
+
+    function turnCard(record, index) {
+      const req = record.request?.body || {};
+      const status = record.response?.status || 0;
+      const selected = index === state.selectedRecordIndex ? "active" : "";
+      const expanded = state.expandedRecords.has(index);
+      const summary = turnSummary(record, index);
+      const protocol = summary.protocol || protocolFromRecord(record);
+      const tools = Array.isArray(summary.tools) ? summary.tools : [];
+      const body = state.view === "grouped"
+        ? groupedBody(summary, expanded)
+        : conversationBody(summary, tools);
+      return `
+        <article class="turn-card ${selected} ${expanded ? "expanded" : ""}">
+          <button class="turn-top turn-item ${selected}" data-record="${index}" aria-expanded="${expanded ? "true" : "false"}">
+            <span class="turn-top-left">
+              <strong>Turn ${escapeHtml(record.turn ?? index + 1)} · ${escapeHtml(req.model || summary.model || "model unknown")}</strong>
+              <span class="chip protocol-${escapeAttr(protocol)}">${escapeHtml(protocolLabel(protocol))}</span>
+              <span class="expand-state">${expanded ? "Collapse" : "Expand"}</span>
+            </span>
+            <span class="turn-top-right">
+              <span>${summary.message_count || 0} messages</span>
+              <span>${summary.tool_schema_count || 0} tools</span>
+              <span class="${status >= 400 ? "status-error" : "status-ok"}">${status || "-"} / ${record.duration_ms ?? 0}ms</span>
+            </span>
+          </button>
+          ${body}
+        </article>
+      `;
+    }
+
+    function conversationBody(summary, tools) {
+      const conversation = Array.isArray(summary.conversation) ? summary.conversation : [];
+      const toolStrip = tools.length
+        ? `<div class="tool-strip">${tools.map((tool) => `<span class="tool-pill">${escapeHtml(tool.title || "tool")}</span>`).join("")}</div>`
+        : "";
+      if (!conversation.length && !tools.length) {
+        return `${toolStrip}<div class="conversation"><div class="text dim">No messages captured.</div></div>`;
+      }
+      return `
+        ${toolStrip}
+        <div class="conversation">
+          ${conversation.map(conversationMessage).join("")}
+        </div>
+      `;
+    }
+
+    function conversationMessage(item) {
+      const kind = item.kind || item.role || "message";
+      const role = item.role || kind;
+      return `
+        <article class="msg ${escapeAttr(kind)}" data-context-section="${escapeAttr(kind)}">
+          <div class="msg-role">${escapeHtml(role)}</div>
+          <div class="msg-body">
+            <div class="msg-title">${escapeHtml(item.title || role)}</div>
+            <div class="msg-text">${escapeHtml(item.text || "")}</div>
+          </div>
+        </article>
+      `;
+    }
+
+    function groupedBody(summary, expanded) {
+      const contextRows = summary.sections?.length
+        ? summary.sections.map((section) => contextSection(section, expanded)).join("")
+        : `<div class="text dim">No messages captured.</div>`;
+      return `<div class="context-stack">${contextRows}</div>`;
+    }
+
+    function contextSection(section, expanded) {
+      const items = Array.isArray(section.items) ? section.items : [];
+      const visibleItems = expanded ? items : items.slice(0, 2);
+      const remainder = Math.max(0, items.length - visibleItems.length);
+      return `
+        <section class="context-section ${escapeAttr(section.kind || "context")}" data-context-section="${escapeAttr(section.kind || "context")}">
+          <div class="context-label">
+            <b>${escapeHtml(section.label || section.kind || "Context")}</b>
+            <span>${section.count || items.length}</span>
+          </div>
+          <div class="context-items">
+            ${visibleItems.map(contextItem).join("")}
+            ${remainder ? `<div class="context-more">+${remainder} more in this turn</div>` : ""}
+          </div>
+        </section>
+      `;
+    }
+
+    function contextItem(item) {
+      return `
+        <div class="context-item">
+          <div class="context-title">${escapeHtml(item.title || "")}</div>
+          <div class="context-text">${escapeHtml(previewText(item.text || "", TIMELINE_PREVIEW_LIMIT))}</div>
+        </div>
+      `;
+    }
+
+    function turnSummary(record, index) {
+      const fromApi = state.detail?.turns?.[index];
+      if (fromApi) return fromApi;
+      const protocol = protocolFromRecord(record);
+      const req = record.request?.body || {};
+      const res = record.response?.body || {};
+      const conversation = fallbackConversation(protocol, req, res);
+      const tools = Array.isArray(req.tools) ? req.tools.map((tool) => ({title: toolName(tool), text: toolDescription(tool)})) : [];
+      const sections = [
+        sectionFromMessages("system", "System prompts", conversation.filter((item) => item.kind === "system" || item.kind === "instructions")),
+        {kind: "tool_schemas", label: "Tool schemas", count: tools.length, items: tools},
+        sectionFromKind("user", "User prompts", conversation, "user"),
+        sectionFromKind("assistant", "Assistant messages", conversation, "assistant"),
+        sectionFromKind("tool_results", "Tool results", conversation, "tool_results"),
+        sectionFromKind("response", "Upstream response", conversation, "response"),
+      ];
+      return {
+        protocol,
+        model: req.model || "",
+        message_count: conversation.filter((item) => item.kind !== "response").length,
+        tool_schema_count: tools.length,
+        conversation,
+        tools,
+        sections: sections.filter((section) => section.count)
+      };
+    }
+
+    function sectionFromKind(kind, label, conversation, match) {
+      const items = conversation.filter((item) => item.kind === match);
+      return {kind, label, count: items.length, items};
+    }
+
+    function sectionFromMessages(kind, label, items) {
+      return {kind, label, count: items.length, items};
+    }
+
+    function fallbackConversation(protocol, req, res) {
+      if (protocol === "openai-responses") return responsesConversation(req, res);
+      if (protocol === "anthropic-messages") return anthropicConversation(req, res);
+      const messages = Array.isArray(req.messages) ? req.messages : [];
+      const conversation = messages.map((message, index) => ({
+        kind: message?.role === "tool" ? "tool_results" : (message?.role || "message"),
+        role: message?.role || "message",
+        title: `${message?.role || "message"} #${index + 1}`,
+        text: contentText(message.content) || toolCallText(message.tool_calls)
+      }));
+      const assistant = assistantMessage(res);
+      if (assistant) {
+        conversation.push({
+          kind: "response",
+          role: "assistant",
+          title: "assistant",
+          text: contentText(assistant.content) || toolCallText(assistant.tool_calls)
+        });
+      }
+      return conversation;
+    }
+
+    function responsesConversation(req, res) {
+      const items = [];
+      if (req.instructions) items.push({kind: "system", role: "system", title: "instructions", text: contentText(req.instructions)});
+      const input = req.input;
+      if (typeof input === "string") items.push({kind: "user", role: "user", title: "user #1", text: input});
+      if (Array.isArray(input)) {
+        input.forEach((entry, index) => {
+          if (typeof entry === "string") {
+            items.push({kind: "user", role: "user", title: `user #${index + 1}`, text: entry});
+            return;
+          }
+          if (entry?.type === "function_call") {
+            items.push({kind: "assistant", role: "assistant", title: entry.name || "tool", text: `${entry.name}(${entry.arguments || ""})`});
+            return;
+          }
+          if (entry?.type === "function_call_output") {
+            items.push({kind: "tool_results", role: "tool", title: entry.call_id || "tool", text: contentText(entry.output)});
+            return;
+          }
+          const role = entry?.role || "user";
+          items.push({kind: role === "tool" ? "tool_results" : role, role, title: `${role} #${index + 1}`, text: contentText(entry?.content || entry)});
+        });
+      }
+      const outputText = res.output_text || (Array.isArray(res.output) ? res.output.map((item) => contentText(item?.content) || `${item?.name || ""}(${item?.arguments || ""})`).filter(Boolean).join("\n") : "");
+      if (outputText) items.push({kind: "response", role: "assistant", title: "assistant", text: outputText});
+      return items;
+    }
+
+    function anthropicConversation(req, res) {
+      const items = [];
+      if (req.system) items.push({kind: "system", role: "system", title: "system", text: contentText(req.system)});
+      (Array.isArray(req.messages) ? req.messages : []).forEach((message, index) => {
+        const role = message?.role || "user";
+        if (Array.isArray(message?.content)) {
+          message.content.forEach((block) => {
+            if (block?.type === "tool_use") {
+              items.push({kind: "assistant", role: "assistant", title: block.name || "tool", text: `${block.name}(${JSON.stringify(block.input || {})})`});
+            } else if (block?.type === "tool_result") {
+              items.push({kind: "tool_results", role: "tool", title: block.tool_use_id || "tool", text: contentText(block.content)});
+            } else {
+              items.push({kind: role, role, title: `${role} #${index + 1}`, text: contentText(block)});
+            }
+          });
+          return;
+        }
+        items.push({kind: role, role, title: `${role} #${index + 1}`, text: contentText(message?.content)});
+      });
+      const responseText = Array.isArray(res.content)
+        ? res.content.map((block) => block?.type === "tool_use" ? `${block.name}(${JSON.stringify(block.input || {})})` : contentText(block)).filter(Boolean).join("\n")
+        : contentText(res.content);
+      if (responseText) items.push({kind: "response", role: "assistant", title: "assistant", text: responseText});
+      return items;
+    }
+
+    function renderInspector() {
+      const record = selectedRecord();
+      $("tabs").innerHTML = tabs.map((tab) => `
+        <button class="tab ${state.tab === tab ? "active" : ""}" data-tab="${tab}">${tab}</button>
+      `).join("");
+      $("tabs").querySelectorAll("[data-tab]").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.tab = button.dataset.tab;
+          renderInspector();
+        });
+      });
+      if (!record) {
+        $("inspect-title").textContent = "Inspector";
+        $("inspect-meta").innerHTML = "";
+        $("payload-label").textContent = "No payload";
+        $("payload").innerHTML = `<div class="empty">Select a trace turn to inspect request, response, raw SSE events, and context delta.</div>`;
+        return;
+      }
+      const summary = turnSummary(record, state.selectedRecordIndex);
+      $("inspect-title").textContent = `Turn ${record.turn ?? state.selectedRecordIndex + 1}`;
+      $("inspect-meta").innerHTML = [
+        protocolLabel(summary.protocol || protocolFromRecord(record)),
+        record.transport || "http",
+        record.request?.path || "",
+        record.upstream_base_url || ""
+      ].filter(Boolean).map((item) => `<span class="chip">${escapeHtml(item)}</span>`).join("");
+      $("payload-label").textContent = state.tab;
+      if (state.tab === "overview") {
+        renderOverview(record);
+      } else if (state.tab === "request") {
+        renderRequestInspector(record);
+      } else if (state.tab === "response") {
+        renderResponseInspector(record);
+      } else if (state.tab === "delta") {
+        renderDelta(record, previousRecord());
+      } else {
+        $("payload").innerHTML = `<pre>${escapeHtml(JSON.stringify(currentPayload(), null, 2))}</pre>`;
+      }
+    }
+
+    function renderRequestInspector(record) {
+      resetFullTextRefs();
+      const req = record.request?.body || {};
+      const summary = turnSummary(record, state.selectedRecordIndex);
+      const tools = Array.isArray(summary.tools) && summary.tools.length
+        ? summary.tools
+        : (Array.isArray(req.tools) ? req.tools.map((tool) => ({title: toolName(tool), text: toolDescription(tool), parameters: tool?.function?.parameters || tool?.parameters || tool?.input_schema || null})) : []);
+      const promptItems = (summary.conversation || []).filter((item) => item.kind !== "response");
+      $("payload").innerHTML = `
+        <div class="inspector-panel" data-inspector-view="request">
+          <section class="inspector-section" data-inspector-section="request-summary">
+            <h3>Request summary</h3>
+            <div class="inspector-grid">
+              ${inspectorStat(req.model || summary.model || "-", "Model")}
+              ${inspectorStat(protocolLabel(summary.protocol || protocolFromRecord(record)), "Protocol")}
+              ${inspectorStat(promptItems.length, "Prompt messages")}
+              ${inspectorStat(tools.length, "Tool schemas")}
+              ${inspectorStat(req.tool_choice || req.tool_choice || "auto", "Tool choice")}
+              ${inspectorStat(String(Boolean(req.stream)), "Stream")}
+              ${inspectorStat(record.request?.path || "-", "Path")}
+            </div>
+          </section>
+          <section class="inspector-section" data-inspector-section="prompt-messages">
+            <h3>Prompt messages</h3>
+            <div class="prompt-list">
+              ${promptItems.length ? promptItems.map((item, index) => promptCard(item.kind, item, index)).join("") : `<div class="empty">No prompt messages captured.</div>`}
+            </div>
+          </section>
+          <section class="inspector-section" data-inspector-section="tool-schemas">
+            <h3>Tool schemas</h3>
+            <div class="tool-list">
+              ${tools.length ? tools.map((tool, index) => toolSchemaCard(tool, index)).join("") : `<div class="empty">No tool schemas captured.</div>`}
+            </div>
+          </section>
+        </div>
+      `;
+      bindInspectorDetailToggles();
+    }
+
+    function renderResponseInspector(record) {
+      resetFullTextRefs();
+      const response = record.response || {};
+      const body = response.body || {};
+      const summary = turnSummary(record, state.selectedRecordIndex);
+      const usage = summary.usage || body.usage || {};
+      const responseItems = (summary.conversation || []).filter((item) => item.kind === "response");
+      const assistant = assistantMessage(body) || (responseItems[0] ? {content: responseItems[0].text, role: "assistant"} : null);
+      const toolCalls = assistant?.tool_calls || [];
+      const error = body.error || null;
+      $("payload").innerHTML = `
+        <div class="inspector-panel" data-inspector-view="response">
+          <section class="inspector-section" data-inspector-section="response-summary">
+            <h3>Response summary</h3>
+            <div class="inspector-grid">
+              ${inspectorStat(response.status || "-", "Status")}
+              ${inspectorStat(record.duration_ms ?? 0, "Duration ms")}
+              ${inspectorStat(tokenValue(usage, "input_tokens", "prompt_tokens"), "Input tokens")}
+              ${inspectorStat(tokenValue(usage, "output_tokens", "completion_tokens"), "Output tokens")}
+              ${inspectorStat(usage.total_tokens ?? "-", "Total tokens")}
+              ${inspectorStat(body.id || body.request_id || "-", "Response id")}
+            </div>
+          </section>
+          <section class="inspector-section" data-inspector-section="assistant-response">
+            <h3>Assistant response</h3>
+            <div class="response-list">
+              ${error ? responseErrorCard(error) : ""}
+              ${responseItems.length ? responseItems.map((item) => responseMessageCard({content: item.text, finish_reason: item.role})).join("") : ""}
+              ${!responseItems.length && assistant ? responseMessageCard(assistant) : ""}
+              ${toolCalls.length ? responseToolCallsCard(toolCalls) : ""}
+              ${!error && !assistant && !toolCalls.length && !responseItems.length ? `<div class="empty">No assistant response body captured.</div>` : ""}
+            </div>
+          </section>
+        </div>
+      `;
+      bindInspectorDetailToggles();
+    }
+
+    function renderOverview(record) {
+      const req = record.request?.body || {};
+      const summary = turnSummary(record, state.selectedRecordIndex);
+      const usage = summary.usage || {};
+      $("payload").innerHTML = `
+        <div class="inspector-panel" data-inspector-view="overview">
+          <section class="inspector-section" data-inspector-section="overview-summary">
+            <h3>Turn overview</h3>
+            <div class="inspector-grid">
+              ${inspectorStat(protocolLabel(summary.protocol || protocolFromRecord(record)), "Protocol")}
+              ${inspectorStat(req.model || summary.model || "-", "Model")}
+              ${inspectorStat(record.response?.status || "-", "Status")}
+              ${inspectorStat(record.duration_ms ?? 0, "Duration ms")}
+              ${inspectorStat(summary.message_count || 0, "Prompt messages")}
+              ${inspectorStat(summary.tool_schema_count || 0, "Tool schemas")}
+              ${inspectorStat(usage.input_tokens ?? tokenValue(usage, "prompt_tokens", "input_tokens"), "Input tokens")}
+              ${inspectorStat(usage.output_tokens ?? tokenValue(usage, "completion_tokens", "output_tokens"), "Output tokens")}
+            </div>
+          </section>
+          <section class="inspector-section" data-inspector-section="overview-response">
+            <h3>Latest model output</h3>
+            <div class="response-list">
+              ${(summary.conversation || []).filter((item) => item.kind === "response").map((item) => `
+                <div class="response-card assistant"><pre class="inspector-text">${escapeHtml(item.text || "")}</pre></div>
+              `).join("") || `<div class="empty">No assistant response captured.</div>`}
+            </div>
+          </section>
+        </div>
+      `;
+    }
+
+    function renderDelta(record, previous) {
+      const currentSummary = turnSummary(record, state.selectedRecordIndex);
+      const previousSummary = previous ? turnSummary(previous, state.selectedRecordIndex - 1) : null;
+      const currentCount = currentSummary.message_count || 0;
+      const previousCount = previousSummary?.message_count || 0;
+      const currentTools = (currentSummary.tools || []).map((tool) => tool.title).filter(Boolean);
+      const previousTools = (previousSummary?.tools || []).map((tool) => tool.title).filter(Boolean);
+      const addedTools = currentTools.filter((name) => !previousTools.includes(name));
+      $("payload").innerHTML = `
+        <div class="delta-list">
+          <div class="delta-item"><b>Messages</b>${Math.max(0, currentCount - previousCount)} added since previous turn, ${currentCount} total.</div>
+          <div class="delta-item"><b>Tools</b>${addedTools.length ? escapeHtml(addedTools.join(", ")) : "No new tool schemas."}</div>
+          <div class="delta-item"><b>Context size</b>${JSON.stringify(record.request?.body || {}).length.toLocaleString()} request characters.</div>
+          <div class="delta-item"><b>Previous turn</b>${previous ? `Turn ${escapeHtml(previous.turn ?? "")}` : "None"}</div>
+        </div>
+      `;
+    }
+
+    function inspectorStat(value, label) {
+      return `<div class="inspector-stat"><b>${escapeHtml(String(value ?? "-"))}</b><span>${escapeHtml(label)}</span></div>`;
+    }
+
+    function inspectorPromptSection(section) {
+      const items = Array.isArray(section.items) ? section.items : [];
+      return items.map((item, index) => promptCard(section.kind, item, index)).join("");
+    }
+
+    function promptCard(kind, item, index) {
+      const role = promptRole(kind);
+      const text = item.text || "";
+      const detailKey = inspectorDetailKey("prompt", kind, index);
+      return `
+        <details class="prompt-card ${escapeAttr(role)}" data-lazy-detail data-detail-key="${escapeAttr(detailKey)}"${inspectorDetailOpenAttr(detailKey)}>
+          <summary>${escapeHtml(role)} <span>${escapeHtml(summaryLine(item.title || `#${index + 1}`, text))}</span></summary>
+          ${lazyText(text)}
+        </details>
+      `;
+    }
+
+    function promptRole(kind) {
+      if (kind === "tool_schemas") return "tool";
+      if (kind === "tool_results") return "tool";
+      if (kind === "instructions") return "system";
+      return kind || "message";
+    }
+
+    function toolSchemaCard(tool, index) {
+      const name = tool.title || toolName(tool) || `tool #${index + 1}`;
+      const description = tool.text || toolDescription(tool);
+      const parameters = tool.parameters || tool?.function?.parameters || tool?.parameters || tool?.input_schema || null;
+      const parametersText = parameters ? JSON.stringify(parameters, null, 2) : "";
+      const detailKey = inspectorDetailKey("tool", index, name);
+      return `
+        <details class="tool-card" data-lazy-detail data-detail-key="${escapeAttr(detailKey)}"${inspectorDetailOpenAttr(detailKey)}>
+          <summary>${escapeHtml(name)} <span>${escapeHtml(description || "No description")}</span></summary>
+          ${description ? lazyText(description) : ""}
+          ${parameters ? `<div class="tool-param">parameters</div>${lazyText(parametersText)}` : ""}
+        </details>
+      `;
+    }
+
+    function responseMessageCard(message) {
+      const text = contentText(message.content) || toolCallText(message.tool_calls);
+      const detailKey = inspectorDetailKey("response", "assistant");
+      return `
+        <details class="response-card assistant" data-lazy-detail data-detail-key="${escapeAttr(detailKey)}"${inspectorDetailOpenAttr(detailKey, true)}>
+          <summary>assistant <span>${escapeHtml(message.finish_reason || "message")}</span></summary>
+          ${lazyText(text || "")}
+        </details>
+      `;
+    }
+
+    function responseToolCallsCard(toolCalls) {
+      const detailKey = inspectorDetailKey("response", "tool_calls");
+      return `
+        <details class="response-card tool_calls" data-lazy-detail data-detail-key="${escapeAttr(detailKey)}"${inspectorDetailOpenAttr(detailKey, true)}>
+          <summary>tool calls <span>${toolCalls.length}</span></summary>
+          ${lazyText(toolCallText(toolCalls))}
+        </details>
+      `;
+    }
+
+    function responseErrorCard(error) {
+      const message = typeof error === "string" ? error : JSON.stringify(error, null, 2);
+      const detailKey = inspectorDetailKey("response", "error");
+      return `
+        <details class="response-card error" data-lazy-detail data-detail-key="${escapeAttr(detailKey)}"${inspectorDetailOpenAttr(detailKey, true)}>
+          <summary>error <span>upstream</span></summary>
+          ${lazyText(message)}
+        </details>
+      `;
+    }
+
+    function tokenValue(usage, primary, fallback) {
+      return usage?.[primary] ?? usage?.[fallback] ?? "-";
+    }
+
+    function resetFullTextRefs() {
+      state.fullTextRefs = new Map();
+      state.fullTextCounter = 0;
+    }
+
+    function rememberFullText(text) {
+      const key = `text-${state.fullTextCounter++}`;
+      state.fullTextRefs.set(key, String(text ?? ""));
+      return key;
+    }
+
+    function lazyText(text, limit = TEXT_PREVIEW_LIMIT) {
+      const key = rememberFullText(text);
+      return `<div class="lazy-text-slot" data-fulltext-ref="${key}" data-preview-limit="${limit}"></div>`;
+    }
+
+    function bindInspectorDetailToggles() {
+      $("payload").querySelectorAll("[data-lazy-detail]").forEach((details) => {
+        const sync = () => {
+          const detailKey = details.dataset.detailKey;
+          if (detailKey) {
+            if (details.open) {
+              state.openInspectorDetails.add(detailKey);
+              state.closedInspectorDetails.delete(detailKey);
+            } else if (state.openInspectorDetails.has(detailKey) || state.closedInspectorDetails.has(detailKey)) {
+              state.openInspectorDetails.delete(detailKey);
+              state.closedInspectorDetails.add(detailKey);
+            }
+          }
+          details.querySelectorAll("[data-fulltext-ref]").forEach((node) => {
+            const fullText = state.fullTextRefs.get(node.dataset.fulltextRef) || "";
+            node.innerHTML = details.open
+              ? `<pre class="inspector-text">${escapeHtml(fullText)}</pre>`
+              : "";
+          });
+        };
+        details.addEventListener("toggle", sync);
+        sync();
+      });
+    }
+
+    function inspectorDetailKey(...parts) {
+      return [
+        state.selectedSession || "",
+        state.selectedRecordIndex,
+        state.tab,
+        ...parts
+      ].map((part) => encodeURIComponent(String(part ?? ""))).join("|");
+    }
+
+    function inspectorDetailOpenAttr(detailKey, defaultOpen = false) {
+      const open = state.openInspectorDetails.has(detailKey)
+        || (defaultOpen && !state.closedInspectorDetails.has(detailKey));
+      return open ? " open" : "";
+    }
+
+    function sessionFingerprint(session) {
+      if (!session) return "";
+      return [
+        session.id || "",
+        session.record_count ?? "",
+        session.started_at || "",
+        session.updated_at || ""
+      ].join("|");
+    }
+
+    function previewText(value, limit) {
+      const text = String(value ?? "");
+      if (text.length <= limit) return text;
+      return `${text.slice(0, limit)}\n\n... ${text.length - limit} chars hidden; use the inspector for full text.`;
+    }
+
+    function summaryLine(title, text) {
+      const compact = String(text || "").replace(/\s+/g, " ").trim();
+      const preview = compact.length > 90 ? `${compact.slice(0, 90)}...` : compact;
+      return preview ? `${title} - ${preview}` : title;
+    }
+
+    function currentPayload() {
+      const record = selectedRecord();
+      if (!record) return {};
+      if (state.tab === "request") return record.request || {};
+      if (state.tab === "response") return record.response || {};
+      if (state.tab === "events") return record.response?.sse_events || [];
+      if (state.tab === "raw") return record;
+      if (state.tab === "delta") return {record, previous: previousRecord()};
+      return {
+        request: record.request?.body,
+        response: record.response?.body,
+        capture: record.capture,
+        duration_ms: record.duration_ms
+      };
+    }
+
+    function filteredRecords() {
+      const records = state.detail?.records || [];
+      const query = state.query;
+      return records.map((record, index) => ({record, index})).filter(({record}) => {
+        if (!query) return true;
+        return JSON.stringify(record).toLowerCase().includes(query);
+      });
+    }
+    function selectedRecord() { return state.detail?.records?.[state.selectedRecordIndex] || null; }
+    function previousRecord() { return state.detail?.records?.[state.selectedRecordIndex - 1] || null; }
+    function protocolFromRecord(record) {
+      return record?.capture?.protocol || pathProtocol(record?.request?.path) || "openai-chat-completions";
+    }
+    function pathProtocol(path) {
+      if (path === "/v1/responses" || path === "/responses") return "openai-responses";
+      if (path === "/v1/messages" || path === "/messages") return "anthropic-messages";
+      if (path === "/v1/chat/completions" || path === "/chat/completions") return "openai-chat-completions";
+      return "";
+    }
+    function protocolLabel(protocol) {
+      return PROTOCOL_LABELS[protocol] || protocol || "Unknown";
+    }
+    function assistantMessage(body) {
+      const choice = body?.choices?.[0];
+      return choice?.message || null;
+    }
+    function messageRow(role, text, extra = "") {
+      return `<div class="message"><div class="role ${escapeAttr(role)}">${escapeHtml(role)}</div><div class="text ${extra}">${escapeHtml(text || "")}</div></div>`;
+    }
+    function metric(value, label) {
+      return `<div class="metric"><b>${escapeHtml(String(value))}</b><span>${escapeHtml(label)}</span></div>`;
+    }
+    function contentText(content) {
+      if (typeof content === "string") return content;
+      if (Array.isArray(content)) return content.map((item) => item?.text || item?.output_text || item?.type || "").join("\n");
+      if (content == null) return "";
+      return JSON.stringify(content, null, 2);
+    }
+    function toolName(tool) { return tool?.function?.name || tool?.name || tool?.type || ""; }
+    function toolDescription(tool) { return tool?.function?.description || tool?.description || ""; }
+    function toolCallText(toolCalls) {
+      if (!Array.isArray(toolCalls)) return "";
+      return toolCalls.map((call) => `${call?.function?.name || call?.name || call?.id || "tool"}(${call?.function?.arguments || call?.arguments || ""})`).join("\n");
+    }
+    function shortId(id) { return id && id.length > 28 ? `${id.slice(0, 12)}...${id.slice(-8)}` : id; }
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[char]));
+    }
+    function escapeAttr(value) { return escapeHtml(value).replace(/\s+/g, "-"); }
+
+    loadSessions();
+    setInterval(loadSessions, 3000);
+  </script>
+</body>
+</html>
