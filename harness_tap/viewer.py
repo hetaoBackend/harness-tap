@@ -280,22 +280,28 @@ VIEWER_HTML = r"""<!doctype html>
     button, input, select {
       font: inherit;
     }
-    button:focus-visible, input:focus-visible, select:focus-visible {
+    button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible {
       outline: 2px solid var(--focus);
       outline-offset: 2px;
     }
     .trace-shell {
       display: grid;
-      grid-template-columns: 300px minmax(440px, 1fr) minmax(360px, 42vw);
+      grid-template-columns: 232px minmax(320px, .95fr) minmax(0, 1.2fr);
       height: 100vh;
-      min-width: 980px;
+      min-width: 0;
     }
     .sessions, .timeline, .inspector {
       min-height: 0;
+      min-width: 0;
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
       border-right: 1px solid var(--line);
       background: var(--panel-2);
     }
-    .inspector { border-right: 0; background: #081016; }
+    .timeline { grid-template-rows: auto auto auto minmax(0, 1fr); }
+    .inspector { grid-template-rows: auto minmax(0, 1fr); border-right: 0; background: #081016; }
+    .trace-shell * { min-width: 0; }
+    .chip, .main-title, .metric b, .item-title, .turn-top strong { overflow-wrap: anywhere; }
     .brand {
       height: 68px;
       padding: 14px 16px;
@@ -357,7 +363,7 @@ VIEWER_HTML = r"""<!doctype html>
       min-height: 22px;
     }
     .list {
-      height: calc(100vh - 139px);
+      min-height: 0;
       overflow: auto;
       padding: 8px;
     }
@@ -426,7 +432,7 @@ VIEWER_HTML = r"""<!doctype html>
     }
     .metric b {
       display: block;
-      font-size: 18px;
+      font-size: 16px;
       line-height: 1.15;
     }
     .metric span {
@@ -435,21 +441,29 @@ VIEWER_HTML = r"""<!doctype html>
       text-transform: uppercase;
     }
     .turns {
-      height: calc(100vh - 183px);
+      min-height: 0;
       overflow: auto;
       padding: 12px 14px 28px;
-      display: grid;
-      gap: 12px;
-      align-content: start;
+      display: block;
+      overflow-anchor: none;
     }
     .turn-card {
       border: 1px solid var(--line);
       background: #0b151c;
       border-radius: 8px;
       overflow: hidden;
-      content-visibility: auto;
-      contain-intrinsic-size: 172px;
+      margin-bottom: 10px;
     }
+    .turn-card.active { border-color: var(--cyan); }
+    .turn-top { width: 100%; text-align: left; color: var(--ink); border: 0; border-radius: 0; }
+    .turn-controls { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+    .turn-controls select { flex: 1; width: 100%; background: var(--panel); color: var(--ink); border: 1px solid var(--line); padding: 6px; border-radius: 6px; }
+    .turn-controls button[aria-pressed="true"] { border-color: var(--amber); color: var(--amber); }
+    .turn-count { width: 100%; color: var(--muted); font-size: 12px; }
+    .turn-preview { margin: 8px 12px; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .context-toggle { margin: 0 12px 10px; background: transparent; border: 0; color: var(--cyan); padding: 4px 0; cursor: pointer; font-size: 12px; }
+    button:disabled { opacity: .45; cursor: default; }
+    .pulse.offline { background: var(--red); box-shadow: none; }
     .turn-top {
       display: flex;
       justify-content: space-between;
@@ -461,6 +475,8 @@ VIEWER_HTML = r"""<!doctype html>
     }
     .turn-top strong { font-size: 13px; }
     .turn-top span { color: var(--muted); font-size: 12px; }
+    .turn-top .status-error { color: var(--red); }
+    .turn-top .status-ok { color: var(--green); }
     .turn-top-left, .turn-top-right {
       display: flex;
       gap: 8px;
@@ -560,7 +576,6 @@ VIEWER_HTML = r"""<!doctype html>
     }
     .text.dim { color: var(--muted); }
     .inspect-body {
-      height: calc(100vh - 68px);
       display: grid;
       grid-template-rows: auto auto minmax(0, 1fr);
       min-height: 0;
@@ -597,14 +612,12 @@ VIEWER_HTML = r"""<!doctype html>
       font-size: 12px;
     }
     .inspector-panel {
-      height: 100%;
-      overflow: auto;
       padding: 12px;
       background: #071017;
     }
     #payload {
       min-height: 0;
-      overflow: hidden;
+      overflow: auto;
     }
     .inspector-section {
       border: 1px solid var(--line);
@@ -679,6 +692,11 @@ VIEWER_HTML = r"""<!doctype html>
     .response-card summary::-webkit-details-marker {
       display: none;
     }
+    .prompt-card summary::before, .tool-card summary::before, .response-card summary::before { content: "▸"; flex: 0 0 auto; }
+    details[open] > summary::before { content: "▾"; }
+    .prompt-card summary { justify-content: flex-start; }
+    .message-label { flex: 0 0 auto; white-space: nowrap; }
+    .prompt-card summary span { flex: 1; }
     .prompt-card summary span, .tool-card summary span, .response-card summary span {
       color: var(--muted);
       font-weight: 600;
@@ -686,7 +704,7 @@ VIEWER_HTML = r"""<!doctype html>
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .prompt-card.system summary { color: var(--amber); }
+    .prompt-card.system summary, .prompt-card.developer summary { color: var(--amber); }
     .prompt-card.user summary { color: var(--cyan); }
     .prompt-card.assistant summary, .response-card.assistant summary { color: var(--green); }
     .prompt-card.tool summary, .tool-card summary, .response-card.tool_calls summary { color: var(--violet); }
@@ -721,8 +739,8 @@ VIEWER_HTML = r"""<!doctype html>
     pre {
       margin: 0;
       padding: 14px;
-      height: 100%;
-      overflow: auto;
+      height: auto;
+      overflow: visible;
       color: #dbe6ee;
       background: #071017;
       font: 12px/1.5 "SFMono-Regular", Consolas, ui-monospace, monospace;
@@ -755,7 +773,11 @@ VIEWER_HTML = r"""<!doctype html>
         grid-template-columns: 1fr;
       }
       .sessions, .timeline, .inspector { border-right: 0; border-bottom: 1px solid var(--line); }
-      .list, .turns, .inspect-body { height: auto; max-height: none; }
+      .sessions { grid-template-rows: auto auto auto; }
+      .list { max-height: 180px; }
+      .timeline { grid-template-rows: auto auto auto auto; }
+      .turns { height: 340px; }
+      .inspector { height: 85vh; min-height: 520px; }
       .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .inspector-grid { grid-template-columns: 1fr; }
       .message, .context-section, .context-item { grid-template-columns: 1fr; gap: 4px; }
@@ -770,10 +792,10 @@ VIEWER_HTML = r"""<!doctype html>
           <h1>Harness Tap Trace Viewer</h1>
           <p>Local context evidence</p>
         </div>
-        <span class="pulse" title="Viewer is live"></span>
+        <span class="pulse" id="connection-status" title="Connecting"></span>
       </header>
       <div class="toolbar">
-        <input id="search" class="search" type="search" placeholder="Search current trace">
+        <input id="search" class="search" type="search" aria-label="Search turns in current session" placeholder="Search turns in this session">
         <div class="meta-row">
           <span class="chip" id="session-count">0 sessions</span>
           <span class="chip" id="refresh-label">auto refresh</span>
@@ -788,6 +810,13 @@ VIEWER_HTML = r"""<!doctype html>
         <div class="meta-row" id="session-meta"></div>
       </header>
       <section class="summary-grid" id="summary"></section>
+      <nav class="turn-controls" aria-label="Turn navigation">
+        <button class="copy-btn" id="previous-turn" aria-label="Previous turn">←</button>
+        <select id="jump-turn" aria-label="Jump to turn"></select>
+        <button class="copy-btn" id="next-turn" aria-label="Next turn">→</button>
+        <button class="copy-btn" id="errors-only" aria-pressed="false">Errors only</button>
+        <span class="turn-count" id="turn-count" role="status"></span>
+      </nav>
       <section class="turns" id="turns"></section>
     </section>
 
@@ -802,7 +831,7 @@ VIEWER_HTML = r"""<!doctype html>
           <span id="payload-label">Select a turn</span>
           <button id="copy" class="copy-btn" type="button">Copy JSON</button>
         </div>
-        <div id="payload"></div>
+        <div id="payload" tabindex="0" aria-label="Turn payload"></div>
       </section>
     </aside>
   </main>
@@ -818,7 +847,11 @@ VIEWER_HTML = r"""<!doctype html>
       fullTextRefs: new Map(),
       fullTextCounter: 0,
       detailFingerprint: "",
-      tab: "overview",
+      detailRequestId: 0,
+      detailLoading: false,
+      sessionsLoading: false,
+      errorsOnly: false,
+      tab: "request",
       query: ""
     };
     const $ = (id) => document.getElementById(id);
@@ -828,46 +861,98 @@ VIEWER_HTML = r"""<!doctype html>
 
     $("search").addEventListener("input", (event) => {
       state.query = event.target.value.toLowerCase();
-      renderSessions();
+      renderTurns();
+    });
+    $("previous-turn").addEventListener("click", () => moveTurn(-1));
+    $("next-turn").addEventListener("click", () => moveTurn(1));
+    $("jump-turn").addEventListener("change", (event) => selectTurn(Number(event.target.value), true));
+    $("errors-only").addEventListener("click", () => {
+      state.errorsOnly = !state.errorsOnly;
+      $("errors-only").setAttribute("aria-pressed", String(state.errorsOnly));
       renderTurns();
     });
     $("copy").addEventListener("click", async () => {
-      const payload = currentPayload();
-      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
-      $("payload-label").textContent = "Copied";
-      setTimeout(renderInspector, 700);
+      try {
+        await navigator.clipboard.writeText(JSON.stringify(currentPayload(), null, 2));
+        $("payload-label").textContent = "Copied";
+      } catch {
+        $("payload-label").textContent = "Copy failed. Select and copy the raw JSON.";
+      }
     });
 
     async function loadSessions() {
-      const response = await fetch("/api/sessions", {cache: "no-store"});
-      const body = await response.json();
-      state.sessions = body.sessions || [];
-      $("session-count").textContent = `${state.sessions.length} sessions`;
-      if (!state.selectedSession && state.sessions.length) {
-        state.selectedSession = state.sessions[0].id;
-        await loadDetail(state.selectedSession);
-      } else if (state.selectedSession) {
-        const selectedSummary = state.sessions.find((session) => session.id === state.selectedSession);
-        if (selectedSummary && sessionFingerprint(selectedSummary) !== state.detailFingerprint) {
-          await loadDetail(state.selectedSession, true);
+      if (state.sessionsLoading) return;
+      state.sessionsLoading = true;
+      try {
+        const response = await fetch("/api/sessions", {cache: "no-store"});
+        if (!response.ok) throw new Error(`Sessions: HTTP ${response.status}`);
+        const body = await response.json();
+        state.sessions = body.sessions || [];
+        $("session-count").textContent = `${state.sessions.length} sessions`;
+        if (!state.selectedSession && state.sessions.length) {
+          await loadDetail(state.sessions[0].id);
+        } else if (state.selectedSession) {
+          const selectedSummary = state.sessions.find((session) => session.id === state.selectedSession);
+          if (selectedSummary && !state.detailLoading && (!state.detail || sessionFingerprint(selectedSummary) !== state.detailFingerprint)) {
+            await loadDetail(state.selectedSession, Boolean(state.detail));
+          } else if (!selectedSummary) {
+            ++state.detailRequestId;
+            state.selectedSession = "";
+            state.detail = null;
+            renderAll();
+            if (state.sessions.length) await loadDetail(state.sessions[0].id);
+          }
         }
+        setConnectionStatus(true);
+        renderSessions();
+      } catch (error) {
+        setConnectionStatus(false, error.message);
+      } finally {
+        state.sessionsLoading = false;
       }
-      renderSessions();
     }
 
     async function loadDetail(sessionId, keepSelection = false) {
-      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {cache: "no-store"});
-      if (!response.ok) return;
-      state.detail = await response.json();
+      const requestId = ++state.detailRequestId;
+      state.detailLoading = true;
       state.selectedSession = sessionId;
-      state.detailFingerprint = sessionFingerprint(state.detail?.session);
       if (!keepSelection) {
         state.selectedRecordIndex = 0;
-        state.expandedRecords = new Set([0]);
+        state.detail = null;
+        state.expandedRecords = new Set();
         state.openInspectorDetails = new Set();
         state.closedInspectorDetails = new Set();
+        state.query = "";
+        state.errorsOnly = false;
+        $("search").value = "";
+        $("errors-only").setAttribute("aria-pressed", "false");
+        renderAll();
+        $("session-title").textContent = "Loading session…";
       }
-      renderAll();
+      try {
+        const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {cache: "no-store"});
+        if (!response.ok) throw new Error(`Session: HTTP ${response.status}`);
+        const detail = await response.json();
+        if (requestId !== state.detailRequestId) return;
+        state.detail = detail;
+        state.detailFingerprint = sessionFingerprint(detail.session);
+        state.selectedRecordIndex = Math.max(0, Math.min(state.selectedRecordIndex, detail.records.length - 1));
+        renderAll();
+        setConnectionStatus(true);
+      } catch (error) {
+        if (requestId !== state.detailRequestId) return;
+        if (!keepSelection) $("session-title").textContent = "Unable to load session. Select it to retry.";
+        setConnectionStatus(false, error.message);
+        throw error;
+      } finally {
+        if (requestId === state.detailRequestId) state.detailLoading = false;
+      }
+    }
+
+    function setConnectionStatus(ok, message = "") {
+      $("refresh-label").textContent = ok ? "auto refresh · 3s" : "refresh failed · retrying";
+      $("connection-status").classList.toggle("offline", !ok);
+      $("connection-status").title = ok ? "Connected" : message;
     }
 
     function renderAll() {
@@ -880,15 +965,17 @@ VIEWER_HTML = r"""<!doctype html>
 
     function renderSessions() {
       const list = $("sessions");
+      const focusedSession = list.contains(document.activeElement) ? document.activeElement.dataset.session : null;
       const sessions = state.sessions;
       list.innerHTML = sessions.length ? sessions.map((session) => `
-        <button class="session-item ${session.id === state.selectedSession ? "active" : ""}" data-session="${escapeAttr(session.id)}">
+        <button class="session-item ${session.id === state.selectedSession ? "active" : ""}" data-session="${escapeAttr(session.id)}" title="${escapeAttr(session.id)}">
           <span class="item-title"><span>${escapeHtml(shortId(session.id))}</span><span>${session.record_count}</span></span>
           <span class="item-sub">${escapeHtml(session.updated_at || session.started_at || "no timestamp")}</span>
         </button>
       `).join("") : `<div class="empty">No trace sessions yet. Send a request through the proxy and this list will fill in.</div>`;
       list.querySelectorAll("[data-session]").forEach((button) => {
-        button.addEventListener("click", () => loadDetail(button.dataset.session));
+        button.addEventListener("click", () => loadDetail(button.dataset.session).catch(() => {}));
+        if (button.dataset.session === focusedSession) button.focus({preventScroll: true});
       });
     }
 
@@ -901,6 +988,7 @@ VIEWER_HTML = r"""<!doctype html>
       }
       const summary = detail.session;
       $("session-title").textContent = shortId(summary.id);
+      $("session-title").title = summary.id;
       $("session-meta").innerHTML = [
         `${summary.record_count} turns`,
         `${summary.models?.join(", ") || "model unknown"}`,
@@ -916,9 +1004,9 @@ VIEWER_HTML = r"""<!doctype html>
         return;
       }
       host.innerHTML = [
-        metric(summary.record_count, "Turns"),
-        metric(summary.total_tokens || 0, "Tokens"),
-        metric(`${summary.total_duration_ms || 0}ms`, "Duration"),
+        metric(summary.record_count.toLocaleString(), "Turns"),
+        metric((summary.total_tokens || 0).toLocaleString(), "Tokens"),
+        metric(formatDuration(summary.total_duration_ms || 0), "Total duration"),
         metric(summary.models?.[0] || "-", "Model"),
       ].join("");
     }
@@ -926,6 +1014,14 @@ VIEWER_HTML = r"""<!doctype html>
     function renderTurns() {
       const records = filteredRecords();
       const host = $("turns");
+      const scrollTop = host.scrollTop;
+      const focused = host.contains(document.activeElement) ? document.activeElement.dataset : null;
+      $("turn-count").textContent = `${records.length} / ${state.detail?.records?.length || 0} turns${state.detail && !records.some(({index}) => index === state.selectedRecordIndex) ? " · selected turn is filtered out" : ""}`;
+      $("jump-turn").innerHTML = `<option value="" disabled ${records.some(({index}) => index === state.selectedRecordIndex) ? "" : "selected"}>Jump to turn</option>` + records.map(({record, index}) => `<option value="${index}" ${index === state.selectedRecordIndex ? "selected" : ""}>Turn ${escapeHtml(record.turn ?? index + 1)}</option>`).join("");
+      const position = records.findIndex(({index}) => index === state.selectedRecordIndex);
+      $("previous-turn").disabled = position <= 0;
+      $("next-turn").disabled = !records.length || position === records.length - 1;
+      $("jump-turn").disabled = !records.length;
       if (!state.detail) {
         host.innerHTML = `<div class="empty">Choose a session to preview the full conversation context.</div>`;
         return;
@@ -937,17 +1033,40 @@ VIEWER_HTML = r"""<!doctype html>
       host.innerHTML = records.map(({record, index}) => turnCard(record, index)).join("");
       host.querySelectorAll("[data-record]").forEach((button) => {
         button.addEventListener("click", () => {
-          const index = Number(button.dataset.record);
-          state.selectedRecordIndex = index;
+          selectTurn(Number(button.dataset.record));
+        });
+      });
+      host.querySelectorAll("[data-expand-record]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const index = Number(button.dataset.expandRecord);
           if (state.expandedRecords.has(index)) {
             state.expandedRecords.delete(index);
           } else {
             state.expandedRecords.add(index);
           }
           renderTurns();
-          renderInspector();
         });
       });
+      host.scrollTop = scrollTop;
+      if (focused) {
+        const selector = focused.expandRecord !== undefined ? `[data-expand-record="${focused.expandRecord}"]` : `[data-record="${focused.record}"]`;
+        host.querySelector(selector)?.focus({preventScroll: true});
+      }
+    }
+
+    function moveTurn(direction) {
+      const records = filteredRecords();
+      const position = records.findIndex(({index}) => index === state.selectedRecordIndex);
+      const target = records[position + direction];
+      if (target) selectTurn(target.index, true);
+    }
+
+    function selectTurn(index, reveal = false) {
+      state.selectedRecordIndex = index;
+      renderTurns();
+      $("payload").scrollTop = 0;
+      renderInspector();
+      if (reveal) $("turns").querySelector(`[data-record="${index}"]`)?.closest(".turn-card").scrollIntoView({block: "nearest"});
     }
 
     function turnCard(record, index) {
@@ -955,24 +1074,28 @@ VIEWER_HTML = r"""<!doctype html>
       const status = record.response?.status || 0;
       const selected = index === state.selectedRecordIndex ? "active" : "";
       const expanded = state.expandedRecords.has(index);
-      const summary = turnSummary(record, index);
-      const contextRows = summary.sections?.length
+      const summary = expanded ? turnSummary(record) : {
+        message_count: Array.isArray(req.messages) ? req.messages.length : 0,
+        tool_schema_count: Array.isArray(req.tools) ? req.tools.length : 0
+      };
+      const contextRows = !expanded ? "" : summary.sections?.length
         ? summary.sections.map((section) => contextSection(section, expanded)).join("")
         : `<div class="text dim">No messages captured.</div>`;
       return `
         <article class="turn-card ${selected} ${expanded ? "expanded" : ""}">
-          <button class="turn-top turn-item ${selected}" data-record="${index}" aria-expanded="${expanded ? "true" : "false"}">
+          <button class="turn-top turn-item ${selected}" data-record="${index}" aria-pressed="${selected ? "true" : "false"}">
             <span class="turn-top-left">
               <strong>Turn ${escapeHtml(record.turn ?? index + 1)} - ${escapeHtml(req.model || "model unknown")}</strong>
-              <span class="expand-state">${expanded ? "Collapse" : "Expand"}</span>
             </span>
             <span class="turn-top-right">
               <span>${summary.message_count || 0} messages</span>
               <span>${summary.tool_schema_count || 0} tools</span>
-              <span class="${status >= 400 ? "status-error" : "status-ok"}">${status || "-"} / ${record.duration_ms ?? 0}ms</span>
+              <span class="${status >= 400 ? "status-error" : "status-ok"}">${status || "-"} / ${formatDuration(record.duration_ms ?? 0)}</span>
             </span>
           </button>
-          <div class="context-stack">${contextRows}</div>
+          <p class="turn-preview">${escapeHtml(turnPreview(record))}</p>
+          <button class="context-toggle" data-expand-record="${index}" aria-expanded="${expanded}" aria-controls="context-${index}">${expanded ? "▾ Hide context" : "▸ Show context"}</button>
+          <div id="context-${index}" ${expanded ? 'class="context-stack"' : 'hidden'}>${contextRows}</div>
         </article>
       `;
     }
@@ -1004,23 +1127,18 @@ VIEWER_HTML = r"""<!doctype html>
       `;
     }
 
-    function turnSummary(record, index) {
-      const fromApi = state.detail?.turns?.[index];
-      if (fromApi) return fromApi;
+    function turnSummary(record) {
       const req = record.request?.body || {};
       const res = record.response?.body || {};
       const messages = Array.isArray(req.messages) ? req.messages : [];
       const tools = Array.isArray(req.tools) ? req.tools : [];
       const sections = [
-        sectionFromMessages("system", "System prompts", messages, "system"),
+        {kind: "messages", label: "Request order", count: messages.length, items: messages.map((message, index) => ({title: `#${index + 1} ${message?.role || "message"}`, text: messageText(message)}))},
         {kind: "tool_schemas", label: "Tool schemas", count: tools.length, items: tools.map((tool) => ({title: toolName(tool), text: toolDescription(tool)}))},
-        sectionFromMessages("user", "User prompts", messages, "user"),
-        sectionFromMessages("assistant", "Assistant messages", messages, "assistant"),
-        sectionFromMessages("tool_results", "Tool results", messages, "tool"),
       ];
       const assistant = assistantMessage(res);
       if (assistant) {
-        sections.push({kind: "response", label: "Upstream response", count: 1, items: [{title: "assistant", text: contentText(assistant.content) || toolCallText(assistant.tool_calls)}]});
+        sections.push({kind: "response", label: "Upstream response", count: 1, items: [{title: "assistant", text: messageText(assistant)}]});
       }
       return {
         message_count: messages.length,
@@ -1029,24 +1147,31 @@ VIEWER_HTML = r"""<!doctype html>
       };
     }
 
-    function sectionFromMessages(kind, label, messages, role) {
-      const items = messages.filter((message) => message?.role === role).map((message, index) => ({
-        title: `${role} #${index + 1}`,
-        text: contentText(message.content) || toolCallText(message.tool_calls)
-      }));
-      return {kind, label, count: items.length, items};
+    function turnPreview(record) {
+      const body = record.response?.body || {};
+      if (body.error) return typeof body.error === "string" ? body.error : JSON.stringify(body.error);
+      const assistant = assistantMessage(body);
+      if (assistant) return summaryLine("Response", messageText(assistant));
+      const messages = record.request?.body?.messages;
+      const last = Array.isArray(messages) ? messages.at(-1) : null;
+      return last ? summaryLine(last.role || "message", messageText(last)) : "No message content captured";
     }
 
     function renderInspector() {
       const record = selectedRecord();
+      const scrollTop = $("payload").scrollTop;
+      const focusedTab = $("tabs").contains(document.activeElement) ? document.activeElement.dataset.tab : null;
+      $("copy").disabled = !record;
       $("tabs").innerHTML = tabs.map((tab) => `
-        <button class="tab ${state.tab === tab ? "active" : ""}" data-tab="${tab}">${tab}</button>
+        <button class="tab ${state.tab === tab ? "active" : ""}" data-tab="${tab}" aria-pressed="${state.tab === tab}">${tab}</button>
       `).join("");
       $("tabs").querySelectorAll("[data-tab]").forEach((button) => {
         button.addEventListener("click", () => {
           state.tab = button.dataset.tab;
+          $("payload").scrollTop = 0;
           renderInspector();
         });
+        if (button.dataset.tab === focusedTab) button.focus({preventScroll: true});
       });
       if (!record) {
         $("inspect-title").textContent = "Inspector";
@@ -1073,6 +1198,7 @@ VIEWER_HTML = r"""<!doctype html>
       } else {
         $("payload").innerHTML = `<pre>${escapeHtml(JSON.stringify(currentPayload(), null, 2))}</pre>`;
       }
+      $("payload").scrollTop = scrollTop;
     }
 
     function renderRequestInspector(record) {
@@ -1080,7 +1206,6 @@ VIEWER_HTML = r"""<!doctype html>
       const req = record.request?.body || {};
       const messages = Array.isArray(req.messages) ? req.messages : [];
       const tools = Array.isArray(req.tools) ? req.tools : [];
-      const promptSections = turnSummary(record, state.selectedRecordIndex).sections?.filter((section) => section.kind !== "response" && section.kind !== "tool_schemas") || [];
       $("payload").innerHTML = `
         <div class="inspector-panel" data-inspector-view="request">
           <section class="inspector-section" data-inspector-section="request-summary">
@@ -1089,15 +1214,15 @@ VIEWER_HTML = r"""<!doctype html>
               ${inspectorStat(req.model || "-", "Model")}
               ${inspectorStat(messages.length, "Prompt messages")}
               ${inspectorStat(tools.length, "Tool schemas")}
-              ${inspectorStat(req.tool_choice || "auto", "Tool choice")}
+              ${inspectorStat(req.tool_choice ?? "auto", "Tool choice")}
               ${inspectorStat(String(Boolean(req.stream)), "Stream")}
               ${inspectorStat(record.request?.path || "-", "Path")}
             </div>
           </section>
           <section class="inspector-section" data-inspector-section="prompt-messages">
-            <h3>Prompt messages</h3>
+            <h3>Prompt messages · original request order</h3>
             <div class="prompt-list">
-              ${promptSections.length ? promptSections.map(inspectorPromptSection).join("") : `<div class="empty">No prompt messages captured.</div>`}
+              ${messages.length ? messages.map((message, index) => promptCard(message, index)).join("") : `<div class="empty">No prompt messages captured.</div>`}
             </div>
           </section>
           <section class="inspector-section" data-inspector-section="tool-schemas">
@@ -1163,18 +1288,21 @@ VIEWER_HTML = r"""<!doctype html>
     }
 
     function renderDelta(record, previous) {
-      const currentMessages = record.request?.body?.messages || [];
-      const previousMessages = previous?.request?.body?.messages || [];
-      const currentTools = record.request?.body?.tools || [];
-      const previousTools = previous?.request?.body?.tools || [];
-      const addedMessages = currentMessages.slice(previousMessages.length);
-      const toolNames = currentTools.map(toolName).filter(Boolean);
-      const previousToolNames = previousTools.map(toolName).filter(Boolean);
-      const addedTools = toolNames.filter((name) => !previousToolNames.includes(name));
+      const asArray = (value) => Array.isArray(value) ? value : [];
+      const currentMessages = asArray(record.request?.body?.messages);
+      const previousMessages = asArray(previous?.request?.body?.messages);
+      let prefix = 0;
+      while (prefix < Math.min(currentMessages.length, previousMessages.length) && stableJson(currentMessages[prefix]) === stableJson(previousMessages[prefix])) prefix++;
+      const messageDelta = prefix === previousMessages.length
+        ? `${currentMessages.length - prefix} added since previous turn, ${currentMessages.length} total.`
+        : `Context replaced or truncated after ${prefix} unchanged messages: ${previousMessages.length - prefix} previous messages → ${currentMessages.length - prefix} current messages. This is not an append-only change.`;
+      const currentTools = asArray(record.request?.body?.tools);
+      const previousTools = asArray(previous?.request?.body?.tools);
+      const toolsChanged = stableJson(currentTools) !== stableJson(previousTools);
       $("payload").innerHTML = `
         <div class="delta-list">
-          <div class="delta-item"><b>Messages</b>${addedMessages.length} added since previous turn, ${currentMessages.length} total.</div>
-          <div class="delta-item"><b>Tools</b>${addedTools.length ? escapeHtml(addedTools.join(", ")) : "No new tool schemas."}</div>
+          <div class="delta-item"><b>Messages</b>${messageDelta}</div>
+          <div class="delta-item"><b>Tools</b>${toolsChanged ? `Tool schemas changed (definitions, order, additions or removals). ${previousTools.length} → ${currentTools.length} schemas.` : "Tool schemas unchanged."}</div>
           <div class="delta-item"><b>Context size</b>${JSON.stringify(record.request?.body || {}).length.toLocaleString()} request characters.</div>
           <div class="delta-item"><b>Previous turn</b>${previous ? `Turn ${escapeHtml(previous.turn ?? "")}` : "None"}</div>
         </div>
@@ -1182,30 +1310,20 @@ VIEWER_HTML = r"""<!doctype html>
     }
 
     function inspectorStat(value, label) {
-      return `<div class="inspector-stat"><b>${escapeHtml(String(value ?? "-"))}</b><span>${escapeHtml(label)}</span></div>`;
+      const text = typeof value === "object" && value !== null ? JSON.stringify(value) : String(value ?? "-");
+      return `<div class="inspector-stat"><b title="${escapeAttr(text)}">${escapeHtml(text)}</b><span>${escapeHtml(label)}</span></div>`;
     }
 
-    function inspectorPromptSection(section) {
-      const items = Array.isArray(section.items) ? section.items : [];
-      return items.map((item, index) => promptCard(section.kind, item, index)).join("");
-    }
-
-    function promptCard(kind, item, index) {
-      const role = promptRole(kind);
-      const text = item.text || "";
-      const detailKey = inspectorDetailKey("prompt", kind, index);
+    function promptCard(message, index) {
+      const role = message?.role || "message";
+      const text = messageText(message);
+      const detailKey = inspectorDetailKey("prompt", index);
       return `
-        <details class="prompt-card ${escapeAttr(role)}" data-lazy-detail data-detail-key="${escapeAttr(detailKey)}"${inspectorDetailOpenAttr(detailKey)}>
-          <summary>${escapeHtml(role)} <span>${escapeHtml(summaryLine(item.title || `#${index + 1}`, text))}</span></summary>
+        <details class="prompt-card ${escapeAttr(role)}" data-message-index="${index}" data-lazy-detail data-detail-key="${escapeAttr(detailKey)}"${inspectorDetailOpenAttr(detailKey)}>
+          <summary><b class="message-label">#${index + 1} ${escapeHtml(role)}</b><span>${escapeHtml(summaryLine(`messages[${index}]`, text))}</span></summary>
           ${lazyText(text)}
         </details>
       `;
-    }
-
-    function promptRole(kind) {
-      if (kind === "tool_schemas") return "tool";
-      if (kind === "tool_results") return "tool";
-      return kind || "message";
     }
 
     function toolSchemaCard(tool, index) {
@@ -1224,7 +1342,8 @@ VIEWER_HTML = r"""<!doctype html>
     }
 
     function responseMessageCard(message) {
-      const text = contentText(message.content) || toolCallText(message.tool_calls);
+      const {tool_calls, ...content} = message;
+      const text = messageText(content);
       const detailKey = inspectorDetailKey("response", "assistant");
       return `
         <details class="response-card assistant" data-lazy-detail data-detail-key="${escapeAttr(detailKey)}"${inspectorDetailOpenAttr(detailKey, true)}>
@@ -1239,7 +1358,7 @@ VIEWER_HTML = r"""<!doctype html>
       return `
         <details class="response-card tool_calls" data-lazy-detail data-detail-key="${escapeAttr(detailKey)}"${inspectorDetailOpenAttr(detailKey, true)}>
           <summary>tool calls <span>${toolCalls.length}</span></summary>
-          ${lazyText(toolCallText(toolCalls))}
+          ${lazyText(JSON.stringify(toolCalls, null, 2))}
         </details>
       `;
     }
@@ -1278,6 +1397,7 @@ VIEWER_HTML = r"""<!doctype html>
     function bindInspectorDetailToggles() {
       $("payload").querySelectorAll("[data-lazy-detail]").forEach((details) => {
         const sync = () => {
+          if (!details.isConnected) return;
           const detailKey = details.dataset.detailKey;
           if (detailKey) {
             if (details.open) {
@@ -1357,6 +1477,7 @@ VIEWER_HTML = r"""<!doctype html>
       const records = state.detail?.records || [];
       const query = state.query;
       return records.map((record, index) => ({record, index})).filter(({record}) => {
+        if (state.errorsOnly && !(record.response?.status >= 400)) return false;
         if (!query) return true;
         return JSON.stringify(record).toLowerCase().includes(query);
       });
@@ -1375,22 +1496,36 @@ VIEWER_HTML = r"""<!doctype html>
     }
     function contentText(content) {
       if (typeof content === "string") return content;
-      if (Array.isArray(content)) return content.map((item) => item?.text || item?.type || "").join("\n");
+      if (Array.isArray(content)) return content.map((item) => typeof item === "string" ? item : JSON.stringify(item, null, 2)).join("\n\n");
       if (content == null) return "";
       return JSON.stringify(content, null, 2);
     }
     function toolName(tool) { return tool?.function?.name || tool?.name || ""; }
     function toolDescription(tool) { return tool?.function?.description || tool?.description || ""; }
-    function toolCallText(toolCalls) {
-      if (!Array.isArray(toolCalls)) return "";
-      return toolCalls.map((call) => `${call?.function?.name || call?.id || "tool"}(${call?.function?.arguments || ""})`).join("\n");
+    function messageText(message) {
+      if (!message || typeof message !== "object") return JSON.stringify(message) ?? "";
+      const parts = [contentText(message.content)];
+      const metadata = Object.fromEntries(Object.entries(message).filter(([key]) => key !== "role" && key !== "content"));
+      if (Object.keys(metadata).length) parts.push(JSON.stringify(metadata, null, 2));
+      return parts.filter(Boolean).join("\n\n");
+    }
+    function stableJson(value) {
+      if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+      if (value && typeof value === "object") return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+      return JSON.stringify(value);
+    }
+    function formatDuration(ms) {
+      if (ms < 1000) return `${ms}ms`;
+      if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+      return `${Math.floor(ms / 60000)}m ${Math.floor(ms % 60000 / 1000)}s`;
     }
     function shortId(id) { return id && id.length > 28 ? `${id.slice(0, 12)}...${id.slice(-8)}` : id; }
     function escapeHtml(value) {
       return String(value ?? "").replace(/[&<>"']/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[char]));
     }
-    function escapeAttr(value) { return escapeHtml(value).replace(/\s+/g, "-"); }
+    function escapeAttr(value) { return escapeHtml(value); }
 
+    renderAll();
     loadSessions();
     setInterval(loadSessions, 3000);
   </script>

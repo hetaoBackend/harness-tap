@@ -16,6 +16,11 @@ dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
 ]
+browser = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "playwright>=1.48,<2",
+]
 
 [project.scripts]
 harness-tap = "harness_tap.cli:main"

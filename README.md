@@ -54,6 +54,29 @@ Trace files are written under:
 The inspect command prints each turn's model, messages, tools, assistant output,
 usage, and duration so you can quickly see what context the client sent.
 
+In the viewer, select a turn to inspect its request. Prompt messages follow the
+original `messages` array order, with both a message number and its JSON index.
+Expand a message for its complete content and metadata, including tool call IDs.
+Tool schemas appear separately after the messages.
+
+The timeline provides previous/next controls, a turn selector, text search and an
+errors-only filter. Selecting a turn and expanding its context are independent.
+Live refresh preserves the selected turn, expanded messages and scroll position.
+Delta compares the shared message prefix and reports context replacement or
+truncation, as well as tool schema changes.
+
+## Run Tests
+
+```bash
+.venv/bin/python -m pip install -e '.[dev,browser]'
+.venv/bin/python -m playwright install chromium
+.venv/bin/python -m pytest -q
+```
+
+The optional browser suite checks actual layout, message order, long sessions,
+refresh state, filtering and session-switch races. Without the `browser` extra,
+those tests are skipped; the API and proxy tests still run.
+
 ## What Is Captured
 
 - Request model, messages, tools, tool choice, generation parameters, and stream
