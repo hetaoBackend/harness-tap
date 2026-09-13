@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from aiohttp import web
+
+from harness_tap.projection import as_dict, context_sections, project_record
 
 
 def install_viewer_routes(app: web.Application, trace_store_key: web.AppKey) -> None:
@@ -11,23 +12,30 @@ def install_viewer_routes(app: web.Application, trace_store_key: web.AppKey) -> 
         return web.Response(text=VIEWER_HTML, content_type="text/html")
 
     async def api_sessions(request: web.Request) -> web.Response:
-        store = request.app[trace_store_key]
-        sessions = store.list_sessions()
-        return web.json_response({"sessions": sessions})
+        return web.json_response({"sessions": request.app[trace_store_key].list_sessions()})
 
     async def api_session_detail(request: web.Request) -> web.Response:
         session_id = request.match_info["session_id"]
-        store = request.app[trace_store_key]
-        records = store.load_session(session_id)
+        records = request.app[trace_store_key].load_session(session_id)
         if not records:
             return web.json_response({"error": "session not found", "session_id": session_id}, status=404)
-        return web.json_response(
-            {
-                "session": _session_summary(session_id, records),
-                "turns": [_turn_context_summary(record, index) for index, record in enumerate(records)],
-                "records": records,
-            }
-        )
+        projections = [project_record(record) for record in records]
+        timestamps = [record["timestamp"] for record in records if isinstance(record.get("timestamp"), str)]
+        return web.json_response({
+            "session": {
+                "id": session_id, "record_count": len(records),
+                "started_at": timestamps[0] if timestamps else "",
+                "updated_at": timestamps[-1] if timestamps else "",
+                "models": sorted({str(as_dict(as_dict(record.get("request")).get("body")).get("model"))
+                                  for record in records if as_dict(as_dict(record.get("request")).get("body")).get("model")}),
+                "total_duration_ms": sum(record.get("duration_ms", 0) for record in records if isinstance(record.get("duration_ms"), int)),
+                "total_tokens": sum(projection["usage"]["total_tokens"] or 0 for projection in projections),
+                "error_count": sum(projection["outcome"]["is_error"] for projection in projections),
+            },
+            "turns": [_turn_context_summary(record, index, projections[index]) for index, record in enumerate(records)],
+            "records": records,
+            "projections": projections,
+        })
 
     app.router.add_get("/", viewer_index)
     app.router.add_get("/viewer", viewer_index)
@@ -35,212 +43,14 @@ def install_viewer_routes(app: web.Application, trace_store_key: web.AppKey) -> 
     app.router.add_get("/api/sessions/{session_id}", api_session_detail)
 
 
-def _session_summary(session_id: str, records: list[dict[str, Any]]) -> dict[str, Any]:
-    timestamps = [record.get("timestamp") for record in records if isinstance(record.get("timestamp"), str)]
+def _turn_context_summary(record: dict[str, Any], index: int, projection: dict) -> dict:
+    request_body = as_dict(as_dict(record.get("request")).get("body"))
     return {
-        "id": session_id,
-        "record_count": len(records),
-        "started_at": timestamps[0] if timestamps else "",
-        "updated_at": timestamps[-1] if timestamps else "",
-        "models": sorted(
-            {
-                model
-                for record in records
-                for model in [_record_model(record)]
-                if model
-            }
-        ),
-        "total_duration_ms": sum(
-            int(record.get("duration_ms") or 0)
-            for record in records
-            if isinstance(record.get("duration_ms"), int)
-        ),
-        "total_tokens": sum(_record_total_tokens(record) for record in records),
-        "error_count": sum(1 for record in records if _record_status(record) >= 400),
+        "index": index, "turn": record.get("turn", index + 1), "model": request_body.get("model", ""),
+        "status": as_dict(record.get("response")).get("status", 0), "duration_ms": record.get("duration_ms", 0),
+        "protocol": projection["protocol"], "message_count": len(projection["input_items"]),
+        "tool_schema_count": len(projection["tools"]), "sections": context_sections(projection),
     }
-
-
-def _record_model(record: dict[str, Any]) -> str:
-    request = record.get("request")
-    body = request.get("body") if isinstance(request, dict) else {}
-    model = body.get("model") if isinstance(body, dict) else ""
-    return model if isinstance(model, str) else ""
-
-
-def _record_status(record: dict[str, Any]) -> int:
-    response = record.get("response")
-    status = response.get("status") if isinstance(response, dict) else 0
-    return status if isinstance(status, int) else 0
-
-
-def _record_total_tokens(record: dict[str, Any]) -> int:
-    response = record.get("response")
-    body = response.get("body") if isinstance(response, dict) else {}
-    usage = body.get("usage") if isinstance(body, dict) else {}
-    if not isinstance(usage, dict):
-        return 0
-    value = usage.get("total_tokens")
-    if isinstance(value, int):
-        return value
-    input_tokens = usage.get("input_tokens") or usage.get("prompt_tokens") or 0
-    output_tokens = usage.get("output_tokens") or usage.get("completion_tokens") or 0
-    return (input_tokens if isinstance(input_tokens, int) else 0) + (output_tokens if isinstance(output_tokens, int) else 0)
-
-
-def _turn_context_summary(record: dict[str, Any], index: int) -> dict[str, Any]:
-    request_body = _request_body(record)
-    response_body = _response_body(record)
-    messages = request_body.get("messages")
-    tools = request_body.get("tools")
-    sections = [
-        _section("system", "System prompts", _message_items(messages, "system")),
-        _section("tool_schemas", "Tool schemas", _tool_schema_items(tools)),
-        _section("user", "User prompts", _message_items(messages, "user")),
-        _section("assistant", "Assistant messages", _message_items(messages, "assistant")),
-        _section("tool_results", "Tool results", _message_items(messages, "tool")),
-        _section("response", "Upstream response", _response_items(response_body)),
-    ]
-    return {
-        "index": index,
-        "turn": record.get("turn", index + 1),
-        "model": request_body.get("model", ""),
-        "status": _record_status(record),
-        "duration_ms": record.get("duration_ms", 0),
-        "message_count": len(messages) if isinstance(messages, list) else 0,
-        "tool_schema_count": len(tools) if isinstance(tools, list) else 0,
-        "sections": [section for section in sections if section["count"]],
-    }
-
-
-def _request_body(record: dict[str, Any]) -> dict[str, Any]:
-    request = record.get("request")
-    body = request.get("body") if isinstance(request, dict) else {}
-    return body if isinstance(body, dict) else {}
-
-
-def _response_body(record: dict[str, Any]) -> dict[str, Any]:
-    response = record.get("response")
-    body = response.get("body") if isinstance(response, dict) else {}
-    return body if isinstance(body, dict) else {}
-
-
-def _section(kind: str, label: str, items: list[dict[str, Any]]) -> dict[str, Any]:
-    return {"kind": kind, "label": label, "count": len(items), "items": items}
-
-
-def _message_items(messages: Any, role: str) -> list[dict[str, Any]]:
-    if not isinstance(messages, list):
-        return []
-    items: list[dict[str, Any]] = []
-    for message in messages:
-        if not isinstance(message, dict) or message.get("role") != role:
-            continue
-        text = _content_text(message.get("content"))
-        tool_calls = _tool_call_text(message.get("tool_calls"))
-        items.append(
-            {
-                "title": f"{role} #{len(items) + 1}",
-                "text": text or tool_calls,
-            }
-        )
-    return items
-
-
-def _tool_schema_items(tools: Any) -> list[dict[str, Any]]:
-    if not isinstance(tools, list):
-        return []
-    items: list[dict[str, Any]] = []
-    for tool in tools:
-        if not isinstance(tool, dict):
-            continue
-        items.append(
-            {
-                "title": _tool_name(tool),
-                "text": _tool_description(tool),
-            }
-        )
-    return items
-
-
-def _response_items(response_body: dict[str, Any]) -> list[dict[str, Any]]:
-    assistant = _assistant_message(response_body)
-    if not assistant:
-        return []
-    text = _content_text(assistant.get("content")) or _tool_call_text(assistant.get("tool_calls"))
-    if not text:
-        return []
-    return [{"title": "assistant", "text": text}]
-
-
-def _assistant_message(response_body: dict[str, Any]) -> dict[str, Any]:
-    choices = response_body.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return {}
-    first = choices[0]
-    if not isinstance(first, dict):
-        return {}
-    message = first.get("message")
-    return message if isinstance(message, dict) else {}
-
-
-def _content_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict):
-                text = item.get("text")
-                if isinstance(text, str):
-                    parts.append(text)
-                elif isinstance(item.get("type"), str):
-                    parts.append(f"[{item['type']}]")
-                else:
-                    parts.append(json.dumps(item, ensure_ascii=False, sort_keys=True))
-            elif item is not None:
-                parts.append(str(item))
-        return "\n".join(parts)
-    if content is None:
-        return ""
-    return json.dumps(content, ensure_ascii=False, sort_keys=True)
-
-
-def _tool_name(tool: dict[str, Any]) -> str:
-    function = tool.get("function")
-    if isinstance(function, dict) and isinstance(function.get("name"), str):
-        return function["name"]
-    name = tool.get("name")
-    if isinstance(name, str):
-        return name
-    tool_type = tool.get("type")
-    return tool_type if isinstance(tool_type, str) else "tool"
-
-
-def _tool_description(tool: dict[str, Any]) -> str:
-    function = tool.get("function")
-    if isinstance(function, dict):
-        description = function.get("description")
-        if isinstance(description, str):
-            return description
-    description = tool.get("description")
-    return description if isinstance(description, str) else ""
-
-
-def _tool_call_text(tool_calls: Any) -> str:
-    if not isinstance(tool_calls, list):
-        return ""
-    parts: list[str] = []
-    for tool_call in tool_calls:
-        if not isinstance(tool_call, dict):
-            continue
-        function = tool_call.get("function")
-        if isinstance(function, dict):
-            name = function.get("name") or tool_call.get("id") or "tool"
-            arguments = function.get("arguments") or ""
-            parts.append(f"{name}({arguments})")
-        else:
-            parts.append(str(tool_call.get("id") or "tool"))
-    return "\n".join(parts)
 
 
 VIEWER_HTML = r"""<!doctype html>
@@ -935,6 +745,7 @@ VIEWER_HTML = r"""<!doctype html>
         const detail = await response.json();
         if (requestId !== state.detailRequestId) return;
         state.detail = detail;
+        state.projections = new WeakMap(detail.records.map((record, index) => [record, detail.projections[index]]));
         state.detailFingerprint = sessionFingerprint(detail.session);
         state.selectedRecordIndex = Math.max(0, Math.min(state.selectedRecordIndex, detail.records.length - 1));
         renderAll();
@@ -1075,7 +886,7 @@ VIEWER_HTML = r"""<!doctype html>
       const selected = index === state.selectedRecordIndex ? "active" : "";
       const expanded = state.expandedRecords.has(index);
       const summary = expanded ? turnSummary(record) : {
-        message_count: Array.isArray(req.messages) ? req.messages.length : 0,
+        message_count: projectionFor(record).input_items.length,
         tool_schema_count: Array.isArray(req.tools) ? req.tools.length : 0
       };
       const contextRows = !expanded ? "" : summary.sections?.length
@@ -1090,7 +901,7 @@ VIEWER_HTML = r"""<!doctype html>
             <span class="turn-top-right">
               <span>${summary.message_count || 0} messages</span>
               <span>${summary.tool_schema_count || 0} tools</span>
-              <span class="${status >= 400 ? "status-error" : "status-ok"}">${status || "-"} / ${formatDuration(record.duration_ms ?? 0)}</span>
+              <span class="${projectionFor(record).outcome.is_error ? "status-error" : "status-ok"}">${status || "-"}${projectionFor(record).outcome.is_error ? " · attention" : ""} / ${formatDuration(record.duration_ms ?? 0)}</span>
             </span>
           </button>
           <p class="turn-preview">${escapeHtml(turnPreview(record))}</p>
@@ -1127,34 +938,31 @@ VIEWER_HTML = r"""<!doctype html>
       `;
     }
 
+    function projectionFor(record) {
+      return state.projections?.get(record) || {input_items: [], output_items: [], tools: [], usage: {}, outcome: {}};
+    }
+
     function turnSummary(record) {
-      const req = record.request?.body || {};
-      const res = record.response?.body || {};
-      const messages = Array.isArray(req.messages) ? req.messages : [];
-      const tools = Array.isArray(req.tools) ? req.tools : [];
-      const sections = [
-        {kind: "messages", label: "Request order", count: messages.length, items: messages.map((message, index) => ({title: `#${index + 1} ${message?.role || "message"}`, text: messageText(message)}))},
-        {kind: "tool_schemas", label: "Tool schemas", count: tools.length, items: tools.map((tool) => ({title: toolName(tool), text: toolDescription(tool)}))},
-      ];
-      const assistant = assistantMessage(res);
-      if (assistant) {
-        sections.push({kind: "response", label: "Upstream response", count: 1, items: [{title: "assistant", text: messageText(assistant)}]});
-      }
+      const view = projectionFor(record);
+      const section = (kind, label, items) => ({kind, label, count: items.length, items});
       return {
-        message_count: messages.length,
-        tool_schema_count: tools.length,
-        sections: sections.filter((section) => section.count)
+        message_count: view.input_items.length,
+        tool_schema_count: view.tools.length,
+        sections: [
+          section("messages", "Request order", view.input_items.map((item, index) => ({title: `#${index + 1} ${item.role}`, text: item.text}))),
+          section("tool_schemas", "Tool schemas", view.tools.map(tool => ({title: toolName(tool), text: toolDescription(tool)}))),
+          section("response", "Upstream response", view.output_items.map(item => ({title: item.kind, text: item.text}))),
+        ].filter(section => section.count)
       };
     }
 
     function turnPreview(record) {
-      const body = record.response?.body || {};
-      if (body.error) return typeof body.error === "string" ? body.error : JSON.stringify(body.error);
-      const assistant = assistantMessage(body);
-      if (assistant) return summaryLine("Response", messageText(assistant));
-      const messages = record.request?.body?.messages;
-      const last = Array.isArray(messages) ? messages.at(-1) : null;
-      return last ? summaryLine(last.role || "message", messageText(last)) : "No message content captured";
+      const view = projectionFor(record);
+      if (view.outcome.error) return JSON.stringify(view.outcome.error);
+      const output = view.output_items[0];
+      if (output) return summaryLine("Response", output.text);
+      const last = view.input_items.at(-1);
+      return last ? summaryLine(last.role, last.text) : "No message content captured";
     }
 
     function renderInspector() {
@@ -1182,6 +990,7 @@ VIEWER_HTML = r"""<!doctype html>
       }
       $("inspect-title").textContent = `Turn ${record.turn ?? state.selectedRecordIndex + 1}`;
       $("inspect-meta").innerHTML = [
+        projectionFor(record).protocol,
         record.transport || "http",
         record.request?.path || "",
         record.upstream_base_url || ""
@@ -1204,7 +1013,8 @@ VIEWER_HTML = r"""<!doctype html>
     function renderRequestInspector(record) {
       resetFullTextRefs();
       const req = record.request?.body || {};
-      const messages = Array.isArray(req.messages) ? req.messages : [];
+      const view = projectionFor(record);
+      const messages = view.input_items;
       const tools = Array.isArray(req.tools) ? req.tools : [];
       $("payload").innerHTML = `
         <div class="inspector-panel" data-inspector-view="request">
@@ -1221,6 +1031,7 @@ VIEWER_HTML = r"""<!doctype html>
           </section>
           <section class="inspector-section" data-inspector-section="prompt-messages">
             <h3>Prompt messages · original request order</h3>
+            ${view.context_note ? `<p class="text">${escapeHtml(view.context_note)}</p><pre>${escapeHtml(JSON.stringify(view.context_references, null, 2))}</pre>` : ""}
             <div class="prompt-list">
               ${messages.length ? messages.map((message, index) => promptCard(message, index)).join("") : `<div class="empty">No prompt messages captured.</div>`}
             </div>
@@ -1240,73 +1051,91 @@ VIEWER_HTML = r"""<!doctype html>
       resetFullTextRefs();
       const response = record.response || {};
       const body = response.body || {};
-      const assistant = assistantMessage(body);
-      const usage = body.usage || {};
-      const toolCalls = assistant?.tool_calls || [];
-      const error = body.error || null;
+      const view = projectionFor(record);
+      const usage = view.usage;
+      const error = view.outcome.error;
       $("payload").innerHTML = `
         <div class="inspector-panel" data-inspector-view="response">
           <section class="inspector-section" data-inspector-section="response-summary">
             <h3>Response summary</h3>
             <div class="inspector-grid">
-              ${inspectorStat(response.status || "-", "Status")}
+              ${inspectorStat(response.status || "-", "HTTP status")}
+              ${inspectorStat(view.outcome.status || "-", "Model status")}
+              ${inspectorStat(view.outcome.stop_reason || "-", "Stop reason")}
               ${inspectorStat(record.duration_ms ?? 0, "Duration ms")}
-              ${inspectorStat(tokenValue(usage, "prompt_tokens", "input_tokens"), "Input tokens")}
-              ${inspectorStat(tokenValue(usage, "completion_tokens", "output_tokens"), "Output tokens")}
-              ${inspectorStat(usage.total_tokens ?? "-", "Total tokens")}
-              ${inspectorStat(body.id || body.request_id || "-", "Response id")}
+              ${inspectorStat(usage.input_tokens, view.protocol === "anthropic-messages" ? "Uncached input tokens" : "Input tokens")}
+              ${inspectorStat(usage.output_tokens, "Output tokens")}
+              ${inspectorStat(usage.total_tokens, "Total tokens")}
+              ${inspectorStat(body.id || "-", "Response id")}
             </div>
           </section>
           <section class="inspector-section" data-inspector-section="assistant-response">
             <h3>Assistant response</h3>
             <div class="response-list">
               ${error ? responseErrorCard(error) : ""}
-              ${assistant ? responseMessageCard(assistant) : ""}
-              ${toolCalls.length ? responseToolCallsCard(toolCalls) : ""}
-              ${!error && !assistant && !toolCalls.length ? `<div class="empty">No assistant response body captured.</div>` : ""}
+              ${view.output_items.map(responseItemCard).join("")}
+              ${!error && !view.output_items.length ? `<div class="empty">No assistant response body captured.</div>` : ""}
             </div>
           </section>
-        </div>
-      `;
+          <section class="inspector-section" data-inspector-section="capture-status">
+            <h3>Capture status &amp; usage details</h3>
+            ${lazyText(JSON.stringify({outcome: view.outcome, usage: usage.raw || {}}, null, 2))}
+          </section>
+        </div>`;
       bindInspectorDetailToggles();
     }
 
+    function responseItemCard(item, index) {
+      const detailKey = inspectorDetailKey("response", index, item.source_path);
+      const tool = item.kind === "function_call" || item.kind === "tool_use";
+      return `<details class="response-card ${tool ? "tool_calls" : "assistant"}" data-lazy-detail data-detail-key="${escapeAttr(detailKey)}"${inspectorDetailOpenAttr(detailKey, true)}>
+        <summary>${escapeHtml(item.kind)} <span>${escapeHtml(item.source_path)}</span></summary>
+        ${lazyText(messageText(item.value))}
+      </details>`;
+    }
+
     function renderOverview(record) {
-      const req = record.request?.body || {};
-      const res = record.response?.body || {};
-      const usage = res.usage || {};
-      const data = {
-        status: record.response?.status,
-        duration_ms: record.duration_ms,
-        model: req.model,
-        messages: Array.isArray(req.messages) ? req.messages.length : 0,
-        tools: Array.isArray(req.tools) ? req.tools.map(toolName).filter(Boolean) : [],
-        usage,
-        assistant: assistantMessage(res)
-      };
-      $("payload").innerHTML = `<pre>${escapeHtml(JSON.stringify(data, null, 2))}</pre>`;
+      const view = projectionFor(record);
+      $("payload").innerHTML = `<pre>${escapeHtml(JSON.stringify({
+        protocol: view.protocol, status: record.response?.status, duration_ms: record.duration_ms,
+        model: record.request?.body?.model, messages: view.input_items.length,
+        tools: view.tools.map(toolName), usage: view.usage, output: view.output_items,
+        context_references: view.context_references, outcome: view.outcome,
+      }, null, 2))}</pre>`;
     }
 
     function renderDelta(record, previous) {
-      const asArray = (value) => Array.isArray(value) ? value : [];
-      const currentMessages = asArray(record.request?.body?.messages);
-      const previousMessages = asArray(previous?.request?.body?.messages);
-      let prefix = 0;
-      while (prefix < Math.min(currentMessages.length, previousMessages.length) && stableJson(currentMessages[prefix]) === stableJson(previousMessages[prefix])) prefix++;
-      const messageDelta = prefix === previousMessages.length
-        ? `${currentMessages.length - prefix} added since previous turn, ${currentMessages.length} total.`
-        : `Context replaced or truncated after ${prefix} unchanged messages: ${previousMessages.length - prefix} previous messages → ${currentMessages.length - prefix} current messages. This is not an append-only change.`;
-      const currentTools = asArray(record.request?.body?.tools);
-      const previousTools = asArray(previous?.request?.body?.tools);
-      const toolsChanged = stableJson(currentTools) !== stableJson(previousTools);
-      $("payload").innerHTML = `
-        <div class="delta-list">
-          <div class="delta-item"><b>Messages</b>${messageDelta}</div>
-          <div class="delta-item"><b>Tools</b>${toolsChanged ? `Tool schemas changed (definitions, order, additions or removals). ${previousTools.length} → ${currentTools.length} schemas.` : "Tool schemas unchanged."}</div>
-          <div class="delta-item"><b>Context size</b>${JSON.stringify(record.request?.body || {}).length.toLocaleString()} request characters.</div>
-          <div class="delta-item"><b>Previous turn</b>${previous ? `Turn ${escapeHtml(previous.turn ?? "")}` : "None"}</div>
-        </div>
-      `;
+      const current = projectionFor(record);
+      const prior = projectionFor(previous);
+      const messages = view => view.input_items.filter(item => !["system", "developer"].includes(item.role)).map(item => item.value);
+      const instructions = view => view.input_items.filter(item => ["system", "developer"].includes(item.role)).map(item => item.value);
+      const currentMessages = messages(current), previousMessages = messages(prior);
+      let messageDelta;
+      if (!previous) {
+        messageDelta = "No previous turn to compare.";
+      } else if (current.protocol !== prior.protocol) {
+        messageDelta = "Not comparable: different API protocols.";
+      } else if (current.context_note || prior.context_note) {
+        messageDelta = "Not comparable: references server-side history; full context is not captured.";
+      } else if (record.capture?.request_truncated || previous.capture?.request_truncated || record.capture?.request_parse_errors || previous.capture?.request_parse_errors) {
+        messageDelta = "Not comparable: request capture is incomplete.";
+      } else {
+        let prefix = 0;
+        while (prefix < Math.min(currentMessages.length, previousMessages.length) && stableJson(currentMessages[prefix]) === stableJson(previousMessages[prefix])) prefix++;
+        messageDelta = prefix === previousMessages.length
+          ? `${currentMessages.length - prefix} added since previous turn, ${currentMessages.length} total.`
+          : `Context replaced or truncated after ${prefix} unchanged messages: ${previousMessages.length - prefix} previous messages → ${currentMessages.length - prefix} current messages. This is not an append-only change.`;
+      }
+      const comparable = previous && !messageDelta.startsWith("Not comparable:");
+      const toolsChanged = stableJson(current.tools) !== stableJson(prior.tools);
+      const instructionsChanged = stableJson(instructions(current)) !== stableJson(instructions(prior));
+      $("payload").innerHTML = `<div class="delta-list">
+        <div class="delta-item"><b>Messages</b>${messageDelta}</div>
+        <div class="delta-item"><b>System / developer instructions</b>${!comparable ? "Not comparable." : instructionsChanged ? "Instructions changed." : "Instructions unchanged."}</div>
+        <div class="delta-item"><b>Tools</b>${!comparable ? "Not comparable." : toolsChanged ? `Tool schemas changed (definitions, order, additions or removals). ${prior.tools.length} → ${current.tools.length} schemas.` : "Tool schemas unchanged."}</div>
+        <div class="delta-item"><b>Context size</b>${JSON.stringify(record.request?.body || {}).length.toLocaleString()} captured request characters.</div>
+        <div class="delta-item"><b>Previous turn</b>${previous ? `Turn ${escapeHtml(previous.turn ?? "")}` : "None"}</div>
+      </div>`;
     }
 
     function inspectorStat(value, label) {
@@ -1314,13 +1143,13 @@ VIEWER_HTML = r"""<!doctype html>
       return `<div class="inspector-stat"><b title="${escapeAttr(text)}">${escapeHtml(text)}</b><span>${escapeHtml(label)}</span></div>`;
     }
 
-    function promptCard(message, index) {
-      const role = message?.role || "message";
-      const text = messageText(message);
+    function promptCard(item, index) {
+      const role = item.role || "message";
+      const text = messageText(item.value);
       const detailKey = inspectorDetailKey("prompt", index);
       return `
         <details class="prompt-card ${escapeAttr(role)}" data-message-index="${index}" data-lazy-detail data-detail-key="${escapeAttr(detailKey)}"${inspectorDetailOpenAttr(detailKey)}>
-          <summary><b class="message-label">#${index + 1} ${escapeHtml(role)}</b><span>${escapeHtml(summaryLine(`messages[${index}]`, text))}</span></summary>
+          <summary><b class="message-label">#${index + 1} ${escapeHtml(role)}</b><span>${escapeHtml(summaryLine(item.source_path, text))}</span></summary>
           ${lazyText(text)}
         </details>
       `;
@@ -1328,39 +1157,11 @@ VIEWER_HTML = r"""<!doctype html>
 
     function toolSchemaCard(tool, index) {
       const name = toolName(tool) || `tool #${index + 1}`;
-      const description = toolDescription(tool);
-      const parameters = tool?.function?.parameters || tool?.parameters || null;
-      const parametersText = parameters ? JSON.stringify(parameters, null, 2) : "";
       const detailKey = inspectorDetailKey("tool", index, name);
-      return `
-        <details class="tool-card" data-lazy-detail data-detail-key="${escapeAttr(detailKey)}"${inspectorDetailOpenAttr(detailKey)}>
-          <summary>${escapeHtml(name)} <span>${escapeHtml(description || "No description")}</span></summary>
-          ${description ? lazyText(description) : ""}
-          ${parameters ? `<div class="tool-param">parameters</div>${lazyText(parametersText)}` : ""}
-        </details>
-      `;
-    }
-
-    function responseMessageCard(message) {
-      const {tool_calls, ...content} = message;
-      const text = messageText(content);
-      const detailKey = inspectorDetailKey("response", "assistant");
-      return `
-        <details class="response-card assistant" data-lazy-detail data-detail-key="${escapeAttr(detailKey)}"${inspectorDetailOpenAttr(detailKey, true)}>
-          <summary>assistant <span>${escapeHtml(message.finish_reason || "message")}</span></summary>
-          ${lazyText(text || "")}
-        </details>
-      `;
-    }
-
-    function responseToolCallsCard(toolCalls) {
-      const detailKey = inspectorDetailKey("response", "tool_calls");
-      return `
-        <details class="response-card tool_calls" data-lazy-detail data-detail-key="${escapeAttr(detailKey)}"${inspectorDetailOpenAttr(detailKey, true)}>
-          <summary>tool calls <span>${toolCalls.length}</span></summary>
-          ${lazyText(JSON.stringify(toolCalls, null, 2))}
-        </details>
-      `;
+      return `<details class="tool-card" data-lazy-detail data-detail-key="${escapeAttr(detailKey)}"${inspectorDetailOpenAttr(detailKey)}>
+        <summary>${escapeHtml(name)} <span>${escapeHtml(toolDescription(tool) || "Tool definition")}</span></summary>
+        ${lazyText(JSON.stringify(tool, null, 2))}
+      </details>`;
     }
 
     function responseErrorCard(error) {
@@ -1477,17 +1278,13 @@ VIEWER_HTML = r"""<!doctype html>
       const records = state.detail?.records || [];
       const query = state.query;
       return records.map((record, index) => ({record, index})).filter(({record}) => {
-        if (state.errorsOnly && !(record.response?.status >= 400)) return false;
+        if (state.errorsOnly && !projectionFor(record).outcome.is_error) return false;
         if (!query) return true;
         return JSON.stringify(record).toLowerCase().includes(query);
       });
     }
     function selectedRecord() { return state.detail?.records?.[state.selectedRecordIndex] || null; }
     function previousRecord() { return state.detail?.records?.[state.selectedRecordIndex - 1] || null; }
-    function assistantMessage(body) {
-      const choice = body?.choices?.[0];
-      return choice?.message || null;
-    }
     function messageRow(role, text, extra = "") {
       return `<div class="message"><div class="role ${escapeAttr(role)}">${escapeHtml(role)}</div><div class="text ${extra}">${escapeHtml(text || "")}</div></div>`;
     }

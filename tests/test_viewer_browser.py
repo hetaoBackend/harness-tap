@@ -181,3 +181,62 @@ async def test_raw_scroll_and_keyboard_focus_survive_refresh(viewer):
     await page.locator('[data-session="session-many"]').focus()
     await page.evaluate("loadSessions()")
     assert await page.evaluate('document.activeElement.dataset.session') == "session-many"
+
+
+@pytest.mark.parametrize('protocol', ['responses', 'messages'])
+async def test_native_protocol_request_response_raw_and_tool_details(viewer, protocol):
+    from test_projection import messages_record, responses_record
+    page, store, _ = viewer
+    record = responses_record() if protocol == 'responses' else messages_record()
+    record['turn'] = 28
+    store.append(record)
+    await page.evaluate('loadSessions()')
+    await page.locator('[data-record="27"]').click()
+    await page.locator('[data-tab="request"]').click()
+    cards = page.locator('.prompt-card')
+    assert await cards.count() == (5 if protocol == 'responses' else 3)
+    first = cards.first
+    await first.locator('summary').click()
+    await playwright.expect(first.locator('pre')).to_contain_text('Use tools carefully' if protocol == 'responses' else 'Be careful')
+    assert ('instructions' if protocol == 'responses' else 'system') in await first.locator('summary').inner_text()
+    if protocol == 'responses':
+        assert 'server-side history' in await page.locator('#payload').inner_text()
+    await page.locator('.tool-card summary').click()
+    await playwright.expect(page.locator('.tool-card pre')).to_contain_text('parameters' if protocol == 'responses' else 'input_schema')
+    await page.locator('[data-tab="response"]').click()
+    output_cards = page.locator('[data-inspector-section="assistant-response"] .response-card')
+    assert await output_cards.count() == (3 if protocol == 'responses' else 4)
+    await playwright.expect(page.locator('#payload')).to_contain_text('opaque-value' if protocol == 'responses' else 'opaque-signature')
+    await playwright.expect(page.locator('.response-card.tool_calls')).to_contain_text('other')
+    await page.locator('[data-tab="raw"]').click()
+    raw = await page.locator('#payload pre').inner_text()
+    assert 'input' in raw if protocol == 'responses' else 'tool_use_id' in raw
+    assert 'input_items' not in raw  # presentation does not mutate the stored trace
+
+
+async def test_responses_server_history_delta_and_http_200_error_filter(viewer):
+    from test_projection import responses_record
+    page, store, _ = viewer
+    for turn in (28, 29):
+        record = responses_record()
+        record['turn'] = turn
+        store.append(record)
+    await page.evaluate('loadSessions()')
+    await page.locator('[data-record="28"]').click()
+    await page.locator('[data-tab="delta"]').click()
+    text = await page.locator('#payload').inner_text()
+    assert 'Not comparable' in text and 'server-side history' in text
+    assert 'replaced or truncated' not in text
+    await page.locator('#errors-only').click()
+    assert await page.locator('.turn-card').count() == 2
+    assert '200 · attention' in await page.locator('.turn-card').first.inner_text()
+
+
+async def test_cross_protocol_delta_is_not_compared_as_empty_messages(viewer):
+    from test_projection import messages_record
+    page, store, _ = viewer
+    store.append({**messages_record(), 'turn': 28})
+    await page.evaluate('loadSessions()')
+    await page.locator('[data-record="27"]').click()
+    await page.locator('[data-tab="delta"]').click()
+    assert 'different API protocols' in await page.locator('#payload').inner_text()

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "harness-tap"
 version = "0.1.0"
-description = "Trace OpenAI Chat Completions traffic from configurable harnesses through a local reverse proxy."
+description = "Trace OpenAI Chat Completions, Responses, and Anthropic Messages through a local reverse proxy."
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.9,<4",

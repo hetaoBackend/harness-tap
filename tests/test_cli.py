@@ -61,3 +61,13 @@ def test_inspect_prints_context_summary(tmp_path, capsys):
     assert "tool: read_file" in output
     assert "assistant: Summary ready." in output
     assert "usage: prompt=10 completion=3 total=13" in output
+
+
+def test_parser_accepts_protocol_upstreams_and_limits():
+    args = build_parser().parse_args(['serve', '--upstream', 'https://gateway.test/v1',
+                                     '--responses-upstream', 'https://openai.test/v1',
+                                     '--messages-upstream', 'https://anthropic.test/v1',
+                                     '--max-capture-bytes', '1024', '--max-request-bytes', '2048', '--read-timeout', '60'])
+    assert args.responses_upstream == 'https://openai.test/v1'
+    assert args.messages_upstream == 'https://anthropic.test/v1'
+    assert (args.max_capture_bytes, args.max_request_bytes, args.read_timeout) == (1024, 2048, 60)
